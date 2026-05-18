@@ -46,12 +46,18 @@ describe("Assets API payloads", () => {
 describe("video task payloads", () => {
   it("uses asset:// references without injecting asset ids into prompt text", () => {
     const payload = buildVideoTaskPayload({
-      model: "ep-model",
+      modelVersion: "seedance2.0fast_vip",
       prompt: "让图片 1 的人物转身看向镜头",
-      assets: [{ id: "Asset-2026abc", assetType: "Image", label: "图片 1" }]
+      mode: "multimodal",
+      ratio: "16:9",
+      duration: 5,
+      references: [{ assetId: "Asset-2026abc", assetType: "Image", role: "reference", label: "图片 1" }]
     });
 
-    expect(payload.model).toBe("ep-model");
+    expect(payload.model).toBe("seedance2.0fast_vip");
+    expect(payload.ratio).toBe("16:9");
+    expect(payload.duration).toBe(5);
+    expect(payload.video_resolution).toBe("720p");
     expect(JSON.stringify(payload)).toContain('"url":"asset://Asset-2026abc"');
     expect(JSON.stringify(payload)).toContain('"role":"reference_image"');
     expect(payload.content[0]).toEqual({
@@ -62,13 +68,19 @@ describe("video task payloads", () => {
 
   it("supports text-only video payloads", () => {
     const payload = buildVideoTaskPayload({
-      model: "ep-model",
+      modelVersion: "seedance2.0fast",
       prompt: "一只玻璃杯在日光下缓慢旋转，背景干净",
-      assets: []
+      mode: "text",
+      ratio: "1:1",
+      duration: 8,
+      references: []
     });
 
     expect(payload).toEqual({
-      model: "ep-model",
+      model: "seedance2.0fast",
+      duration: 8,
+      ratio: "1:1",
+      video_resolution: "720p",
       content: [
         {
           type: "text",
@@ -76,5 +88,41 @@ describe("video task payloads", () => {
         }
       ]
     });
+  });
+
+  it("supports direct HTTPS image references for advanced mode", () => {
+    const payload = buildVideoTaskPayload({
+      modelVersion: "seedance2.0",
+      prompt: "参考图片 1 的构图",
+      mode: "multimodal",
+      ratio: "21:9",
+      duration: 4,
+      references: [{
+        sourceUrl: "https://litter.catbox.moe/ref.png",
+        assetType: "Image",
+        role: "reference",
+        label: "图片 1"
+      }]
+    });
+
+    expect(JSON.stringify(payload)).toContain('"url":"https://litter.catbox.moe/ref.png"');
+  });
+
+  it("marks first and last frame references in frames mode", () => {
+    const payload = buildVideoTaskPayload({
+      modelVersion: "seedance2.0fast",
+      prompt: "从首帧自然过渡到尾帧",
+      mode: "frames",
+      ratio: "16:9",
+      duration: 5,
+      references: [
+        { sourceUrl: "https://litter.catbox.moe/start.png", assetType: "Image", role: "first_frame", label: "首帧" },
+        { sourceUrl: "https://litter.catbox.moe/end.png", assetType: "Image", role: "last_frame", label: "尾帧" }
+      ]
+    });
+
+    expect(payload.content[1]).toMatchObject({ role: "first_frame" });
+    expect(payload.content[2]).toMatchObject({ role: "last_frame" });
+    expect(payload).not.toHaveProperty("ratio");
   });
 });

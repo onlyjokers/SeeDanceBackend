@@ -1,16 +1,49 @@
 import { z } from "zod";
+import { videoModelVersions, videoRatios } from "./payloads.js";
 
 export const videoTaskRequestSchema = z.object({
-  mode: z.enum(["text", "asset"]).default("asset"),
+  projectId: z.string().optional(),
+  mode: z.enum(["text", "multimodal", "frames"]).default("multimodal"),
+  referenceTransport: z.enum(["asset", "url"]).default("asset"),
   prompt: z.string().min(1),
-  assetIds: z.array(z.string()).default([])
+  modelVersion: z.enum(videoModelVersions).default("seedance2.0fast_vip"),
+  ratio: z.enum(videoRatios).default("16:9"),
+  duration: z.number().int().min(4).max(15).default(5),
+  references: z.array(z.object({
+    role: z.enum(["reference", "first_frame", "last_frame"]),
+    sourceUrl: z.string().url().optional(),
+    previewUrl: z.string().url().optional(),
+    assetId: z.string().optional(),
+    assetType: z.enum(["Image", "Video", "Audio"]).default("Image"),
+    label: z.string().optional()
+  })).default([])
 }).superRefine((value, context) => {
-  if (value.mode === "asset" && value.assetIds.length === 0) {
+  if (value.mode === "multimodal" && value.references.length > 3) {
     context.addIssue({
       code: "custom",
-      path: ["assetIds"],
-      message: "素材参考生成至少需要选择一个 Active 素材"
+      path: ["references"],
+      message: "全能参考最多支持 3 张图片"
     });
+  }
+  if (value.mode === "frames") {
+    const hasFirst = value.references.some((reference) => reference.role === "first_frame");
+    const hasLast = value.references.some((reference) => reference.role === "last_frame");
+    if (!hasFirst || !hasLast) {
+      context.addIssue({
+        code: "custom",
+        path: ["references"],
+        message: "首尾帧模式需要上传首帧和尾帧"
+      });
+    }
+  }
+  for (const [index, reference] of value.references.entries()) {
+    if (!reference.assetId && !reference.sourceUrl) {
+      context.addIssue({
+        code: "custom",
+        path: ["references", index],
+        message: "参考图片缺少 URL 或 Asset ID"
+      });
+    }
   }
 });
 

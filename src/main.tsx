@@ -1,33 +1,56 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Box,
-  CheckCircle2,
+  ArrowUp,
+  Check,
+  ChevronDown,
   Clock3,
-  Database,
-  Download,
-  FileVideo,
-  FolderOpen,
-  Image,
-  Layers3,
+  CopyPlus,
+  FilePenLine,
+  FileImage,
+  Film,
+  Folder,
+  FolderPlus,
+  HardDrive,
+  ImagePlus,
+  KeyRound,
   Loader2,
-  Play,
+  PencilLine,
   RefreshCcw,
-  ShieldAlert,
+  Save,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
   Trash2,
+  UploadCloud,
   Wand2
 } from "lucide-react";
 import "./styles.css";
 
 type AssetType = "Image" | "Video" | "Audio";
+type VideoMode = "multimodal" | "frames";
+type ReferenceTransport = "asset" | "url";
+type VideoModelVersion = "seedance2.0fast_vip" | "seedance2.0fast" | "seedance2.0" | "seedance2.0_vip";
+type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
+type ReferenceRole = "reference" | "first_frame" | "last_frame";
 
 interface PublicConfig {
   assetsCredentialsConfigured: boolean;
   arkAPIKeyConfigured: boolean;
   arkVideoModel: string;
+  arkBaseURL: string;
+  imageHostURL: string;
   volcengineRegion: string;
   pollIntervalSeconds: number;
   pollTimeoutSeconds: number;
+}
+
+interface RuntimeSettings {
+  arkAPIKey: string;
+  arkVideoModel: string;
+  arkBaseURL: string;
+  imageHostURL: string;
 }
 
 interface AssetGroup {
@@ -49,15 +72,32 @@ interface Asset {
   projectName: string;
 }
 
+interface VideoReference {
+  assetId?: string;
+  sourceUrl?: string;
+  previewUrl?: string;
+  assetType: AssetType;
+  role: ReferenceRole;
+  label?: string;
+}
+
 interface VideoTask {
   id: string;
+  projectId?: string;
   remoteTaskId?: string;
   prompt: string;
   assetIds: string[];
+  mode?: VideoMode | "text";
+  referenceTransport?: ReferenceTransport;
+  modelVersion?: VideoModelVersion;
+  ratio?: VideoRatio;
+  duration?: number;
+  references?: VideoReference[];
   status: "queued" | "running" | "succeeded" | "failed";
   errorMessage?: string;
   videoUrl?: string;
   downloadPath?: string;
+  hiddenAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,41 +112,73 @@ interface PollLog {
 interface AppState {
   assetGroups: AssetGroup[];
   assets: Asset[];
+  videoProjects: VideoProject[];
   videoTasks: VideoTask[];
   pollLogs: PollLog[];
+  runtimeSettings?: RuntimeSettings;
 }
 
-const emptyState: AppState = {
-  assetGroups: [],
-  assets: [],
-  videoTasks: [],
-  pollLogs: []
+interface VideoProject {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ReferenceSlot {
+  id: string;
+  role: ReferenceRole;
+  label: string;
+  url?: string;
+  uploading?: boolean;
+  error?: string;
+}
+
+const emptyState: AppState = { assetGroups: [], assets: [], videoProjects: [], videoTasks: [], pollLogs: [] };
+
+const modelOptions: Array<{ value: VideoModelVersion; label: string; short: string }> = [
+  { value: "seedance2.0fast_vip", label: "Seedance 2.0 Fast VIP", short: "Fast VIP" },
+  { value: "seedance2.0fast", label: "Seedance 2.0 Fast", short: "Fast" },
+  { value: "seedance2.0", label: "Seedance 2.0", short: "2.0" },
+  { value: "seedance2.0_vip", label: "Seedance 2.0 VIP", short: "VIP" }
+];
+
+const ratioOptions: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+const durationOptions = Array.from({ length: 12 }, (_, index) => index + 4);
+
+const modeLabels: Record<VideoMode, string> = {
+  multimodal: "全能参考",
+  frames: "首尾帧"
 };
 
 function App() {
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
-  const [groupName, setGroupName] = useState("default-portrait-group");
-  const [groupDescription, setGroupDescription] = useState("SeeDance reference assets");
-  const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [assetName, setAssetName] = useState("reference-image");
-  const [assetUrl, setAssetUrl] = useState("");
-  const [assetType, setAssetType] = useState<AssetType>("Image");
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-  const [generationMode, setGenerationMode] = useState<"text" | "asset">("text");
-  const [prompt, setPrompt] = useState("图片 1 里的人物缓慢转身看向镜头，动作自然，保持人物身份一致。");
-  const [busy, setBusy] = useState<string | null>(null);
+  const [mode, setMode] = useState<VideoMode>("frames");
+  const [referenceTransport, setReferenceTransport] = useState<ReferenceTransport>("asset");
+  const [modelVersion, setModelVersion] = useState<VideoModelVersion>("seedance2.0fast_vip");
+  const [ratio, setRatio] = useState<VideoRatio>("16:9");
+  const [duration, setDuration] = useState(5);
+  const [prompt, setPrompt] = useState("");
+  const [slots, setSlots] = useState<ReferenceSlot[]>(initialSlots("frames"));
+  const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
+  const [openMenu, setOpenMenu] = useState<"mode" | "model" | "ratio" | "duration" | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [view, setView] = useState<"generate" | "assets">("generate");
+  const didInitialScrollRef = useRef(false);
 
-  const activeAssets = useMemo(() => state.assets.filter((asset) => asset.status === "Active"), [state.assets]);
-  const latestTask = state.videoTasks[0];
+  const activeProjectId = selectedProjectId ?? state.videoProjects[0]?.id ?? "";
+  const visibleTasks = useMemo(() => state.videoTasks.filter((task) => !task.hiddenAt), [state.videoTasks]);
+  const sessionTasks = useMemo(() => sortTasksForBottomStack(visibleTasks.filter((task) => (task.projectId ?? state.videoProjects[0]?.id) === activeProjectId)), [activeProjectId, state.videoProjects, visibleTasks]);
+  const generatedAssets = useMemo(() => sortTasksForBottomStack(visibleTasks.filter((task) => task.videoUrl || task.downloadPath)), [visibleTasks]);
+  const selectedModel = modelOptions.find((item) => item.value === modelVersion) ?? modelOptions[0];
 
   async function refresh() {
     const [configResponse, stateResponse] = await Promise.all([fetch("/api/config"), fetch("/api/state")]);
     setConfig(await configResponse.json());
-    const nextState = await stateResponse.json();
-    setState(nextState);
-    if (!selectedGroupId && nextState.assetGroups?.[0]?.id) setSelectedGroupId(nextState.assetGroups[0].id);
+    setState(await stateResponse.json());
   }
 
   useEffect(() => {
@@ -115,250 +187,764 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  async function submitGroup() {
-    await mutate("group", "/api/asset-groups", {
-      name: groupName,
-      description: groupDescription,
-      projectName: "default"
-    });
+  useEffect(() => {
+    if (!selectedProjectId && state.videoProjects[0]?.id) setSelectedProjectId(state.videoProjects[0].id);
+  }, [selectedProjectId, state.videoProjects]);
+
+  useEffect(() => {
+    if (didInitialScrollRef.current || !state.videoTasks.length) return;
+    didInitialScrollRef.current = true;
+    window.requestAnimationFrame(() => scrollTimelineToBottom());
+  }, [state.videoTasks.length]);
+
+  function switchMode(nextMode: VideoMode) {
+    setMode(nextMode);
+    setSlots(initialSlots(nextMode));
+    setOpenMenu(null);
   }
 
-  async function submitAsset() {
-    await mutate("asset", "/api/assets", {
-      groupId: selectedGroupId,
-      url: assetUrl,
-      name: assetName,
-      assetType,
-      projectName: "default"
-    });
-  }
-
-  async function submitVideoTask() {
-    await mutate("video", "/api/video-tasks", {
-      mode: generationMode,
-      prompt,
-      assetIds: generationMode === "asset" ? selectedAssetIds : []
-    });
-  }
-
-  async function pollAsset(id: string) {
-    await mutate(`poll-${id}`, `/api/assets/${id}/poll`, { projectName: "default" });
-  }
-
-  async function removeAsset(id: string) {
-    setBusy(`delete-${id}`);
-    try {
-      const response = await fetch(`/api/assets/${id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error((await response.json()).error ?? "删除失败");
-      await refresh();
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function openDownloadFolder() {
-    setBusy("open-download-folder");
+  async function submitVideoTask(overrides?: Partial<ComposerPayload>) {
+    const payload = buildComposerPayload(overrides);
+    setBusy("video");
     setToast("");
     try {
-      const response = await fetch("/api/downloads/open-folder", { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "打开下载文件夹失败");
-      setToast(`已打开下载文件夹：${result.path}`);
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function mutate(scope: string, url: string, body: unknown) {
-    setBusy(scope);
-    setToast("");
-    try {
-      const response = await fetch(url, {
+      const response = await fetch("/api/video-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(payload)
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "请求失败");
+      if (!response.ok) throw new Error(result.error ?? "提交视频任务失败");
+      setSelectedTaskId(result.id);
+      await refresh();
+      window.requestAnimationFrame(() => scrollTimelineToBottom("smooth"));
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function buildComposerPayload(overrides: Partial<ComposerPayload> = {}): ComposerPayload {
+    return {
+      projectId: activeProjectId || undefined,
+      mode,
+      referenceTransport,
+      prompt: prompt.trim(),
+      modelVersion,
+      ratio,
+      duration,
+      references: slots
+        .filter((slot) => slot.url)
+        .map((slot) => ({
+          role: slot.role,
+          sourceUrl: slot.url,
+          previewUrl: slot.url,
+          assetType: "Image" as const,
+          label: slot.label
+        })),
+      ...overrides
+    };
+  }
+
+  function restoreTask(task: VideoTask) {
+    setMode((task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal");
+    setReferenceTransport(task.referenceTransport ?? "asset");
+    setModelVersion(task.modelVersion ?? "seedance2.0fast_vip");
+    setRatio(task.ratio ?? "16:9");
+    setDuration(task.duration ?? 5);
+    setPrompt(task.prompt);
+    setSlots(slotsFromTask(task));
+    scrollTimelineToBottom("smooth");
+  }
+
+  function regenerateTask(task: VideoTask) {
+    void submitVideoTask({
+      mode: (task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal",
+      referenceTransport: task.referenceTransport ?? "asset",
+      prompt: task.prompt,
+      modelVersion: task.modelVersion ?? "seedance2.0fast_vip",
+      ratio: task.ratio ?? "16:9",
+      duration: task.duration ?? 5,
+      references: task.references ?? []
+    });
+  }
+
+  async function deleteTask(taskId: string) {
+    setBusy(`delete-${taskId}`);
+    setToast("");
+    try {
+      const response = await fetch(`/api/video-tasks/${taskId}`, { method: "DELETE" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "删除记录失败");
+      setSelectedTaskId((id) => id === taskId ? null : id);
       await refresh();
     } catch (error) {
       setToast(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusy(null);
+      setBusy("");
     }
   }
 
-  function toggleAsset(id: string) {
-    setSelectedAssetIds((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
+  async function createProject() {
+    setBusy("project");
+    setToast("");
+    try {
+      const response = await fetch("/api/video-projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `新项目 ${state.videoProjects.length + 1}` })
+      });
+      const project = await response.json();
+      if (!response.ok) throw new Error(project.error ?? "创建项目失败");
+      setSelectedProjectId(project.id);
+      setView("generate");
+      setSelectedTaskId(null);
+      await refresh();
+      scrollTimelineToBottom("smooth");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
   }
 
-  const assetsAPIReady = Boolean(config?.assetsCredentialsConfigured);
-  const canGenerate = Boolean(config?.arkAPIKeyConfigured)
-    && prompt.trim().length > 0
-    && (generationMode === "text" || selectedAssetIds.length > 0);
+  async function renameProject(projectId: string, name: string) {
+    setBusy(`rename-${projectId}`);
+    setToast("");
+    try {
+      const response = await fetch(`/api/video-projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const project = await response.json();
+      if (!response.ok) throw new Error(project.error ?? "重命名项目失败");
+      await refresh();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function uploadSlot(slotId: string, file: File) {
+    setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, uploading: true, error: "" } : slot));
+    const body = new FormData();
+    body.set("file", file);
+    try {
+      const response = await fetch("/api/uploads/image", { method: "POST", body });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "上传图片失败");
+      setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: result.url, uploading: false } : slot));
+    } catch (error) {
+      setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, uploading: false, error: error instanceof Error ? error.message : String(error) } : slot));
+    }
+  }
+
+  function swapFrameSlots() {
+    setSlots((items) => {
+      const first = items.find((slot) => slot.role === "first_frame");
+      const last = items.find((slot) => slot.role === "last_frame");
+      if (!first || !last) return items;
+      return items.map((slot) => {
+        if (slot.role === "first_frame") return { ...slot, url: last.url, error: last.error };
+        if (slot.role === "last_frame") return { ...slot, url: first.url, error: first.error };
+        return slot;
+      });
+    });
+  }
+
+  const canSubmit = useMemo(() => {
+    if (!config?.arkAPIKeyConfigured || !prompt.trim() || slots.some((slot) => slot.uploading)) return false;
+    const filled = slots.filter((slot) => slot.url);
+    if (mode === "frames") return filled.some((slot) => slot.role === "first_frame") && filled.some((slot) => slot.role === "last_frame");
+    return filled.length > 0 && filled.length <= 3;
+  }, [config?.arkAPIKeyConfigured, mode, prompt, slots]);
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark"><Wand2 size={20} /></div>
-          <div>
-            <strong>SeeDance</strong>
-            <span>Asset Workbench</span>
-          </div>
+    <main className="dream-shell">
+      <ConversationRail
+        projects={state.videoProjects}
+        selectedProjectId={activeProjectId}
+        view={view}
+        onView={setView}
+        onCreateProject={createProject}
+        onRenameProject={renameProject}
+        onSelectProject={(projectId) => {
+          setSelectedProjectId(projectId);
+          setSelectedTaskId(null);
+          setView("generate");
+          scrollTimelineToBottom("smooth");
+        }}
+      />
+      <header className="dream-topbar">
+        <div className="search-pill">
+          <button><Search size={17} /></button>
+          <button>时间<ChevronDown size={14} /></button>
+          <button>生成模式<ChevronDown size={14} /></button>
+          <button>操作类型<ChevronDown size={14} /></button>
         </div>
-        <nav>
-          <a href="#groups"><Layers3 size={17} />素材组</a>
-          <a href="#assets"><Image size={17} />素材</a>
-          <a href="#video"><FileVideo size={17} />视频任务</a>
-          <a href="#downloads"><Download size={17} />下载记录</a>
-        </nav>
-        <div className="config-card">
-          <h2><Database size={16} />配置</h2>
-          <StatusLine ok={Boolean(config?.assetsCredentialsConfigured)} label="Assets AK/SK" />
-          <StatusLine ok={Boolean(config?.arkAPIKeyConfigured)} label="Ark API Key" />
-          <p>Model: <code>{config?.arkVideoModel ?? "loading"}</code></p>
-          <p>Region: <code>{config?.volcengineRegion ?? "cn-beijing"}</code></p>
-        </div>
-      </aside>
+      </header>
 
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Assets API + Seedance task pipeline</p>
-            <h1>素材资产到视频生成</h1>
+      {view === "assets" ? (
+        <AssetLibrary tasks={generatedAssets} pollLogs={state.pollLogs} onEdit={restoreTask} onRegenerate={regenerateTask} onDelete={deleteTask} />
+      ) : (
+        <section className="timeline">
+          <div className="date-heading">5月19日</div>
+          {!sessionTasks.length && (
+            <section className="empty-state">
+              <Wand2 size={30} />
+              <h1>{projectName(state.videoProjects, activeProjectId)}</h1>
+              <p>这个项目还是空的。上传参考图，输入画面与动作描述，提交后任务会从底部堆叠到这里。</p>
+            </section>
+          )}
+          {sessionTasks.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              selected={task.id === selectedTaskId}
+              latestLog={state.pollLogs.find((log) => log.taskId === task.id)}
+              onEdit={() => restoreTask(task)}
+              onRegenerate={() => regenerateTask(task)}
+              onDelete={() => deleteTask(task.id)}
+            />
+          ))}
+        </section>
+      )}
+
+      {view === "generate" && <section className="composer-wrap">
+        {toast && <div className="toast">{toast}</div>}
+        <div className="composer">
+          <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, error: "" } : slot))} />
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多3个参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @图片2 的动作。"}
+          />
+          <div className="composer-controls">
+            <MenuButton active={openMenu === "mode"} onClick={() => setOpenMenu(openMenu === "mode" ? null : "mode")} icon={<Sparkles size={18} />} label="视频生成" />
+            <MenuButton active={openMenu === "model"} onClick={() => setOpenMenu(openMenu === "model" ? null : "model")} icon={<Film size={18} />} label={selectedModel.label} />
+            <MenuButton active={false} onClick={() => switchMode(mode === "frames" ? "multimodal" : "frames")} icon={<FileImage size={18} />} label={modeLabels[mode]} />
+            <MenuButton active={openMenu === "ratio"} onClick={() => setOpenMenu(openMenu === "ratio" ? null : "ratio")} icon={<RatioIcon ratio={ratio} />} label={ratio} />
+            <MenuButton active={openMenu === "duration"} onClick={() => setOpenMenu(openMenu === "duration" ? null : "duration")} icon={<Clock3 size={18} />} label={`${duration}s`} />
+            <button className={`transport-toggle ${referenceTransport === "url" ? "active" : ""}`} onClick={() => setReferenceTransport(referenceTransport === "asset" ? "url" : "asset")} title="切换参考图片链路">
+              {referenceTransport === "asset" ? "Asset" : "URL"}
+            </button>
+            <button className="submit-button" disabled={!canSubmit || busy === "video"} onClick={() => submitVideoTask()}>
+              {busy === "video" ? <Loader2 className="spin" size={20} /> : <ArrowUp size={22} />}
+            </button>
           </div>
-          <button className="icon-button" onClick={refresh} title="刷新状态">
-            <RefreshCcw size={18} />
+          {openMenu && (
+            <FloatingMenu kind={openMenu} mode={mode} modelVersion={modelVersion} ratio={ratio} duration={duration} onMode={switchMode} onModel={setModelVersion} onRatio={setRatio} onDuration={setDuration} onClose={() => setOpenMenu(null)} />
+          )}
+        </div>
+      </section>}
+    </main>
+  );
+}
+
+interface ComposerPayload {
+  projectId?: string;
+  mode: VideoMode;
+  referenceTransport: ReferenceTransport;
+  prompt: string;
+  modelVersion: VideoModelVersion;
+  ratio: VideoRatio;
+  duration: number;
+  references: VideoReference[];
+}
+
+function ConversationRail({ projects, selectedProjectId, view, onView, onCreateProject, onRenameProject, onSelectProject }: {
+  projects: VideoProject[];
+  selectedProjectId: string;
+  view: "generate" | "assets";
+  onView: (view: "generate" | "assets") => void;
+  onCreateProject: () => void;
+  onRenameProject: (projectId: string, name: string) => void;
+  onSelectProject: (projectId: string) => void;
+}) {
+  return (
+    <aside className="conversation-rail">
+      <nav className="icon-rail" aria-label="主导航">
+        <div className="brand-star">✦</div>
+        <button className={view === "generate" ? "active" : ""} onClick={() => onView("generate")}><Sparkles size={22} /><span>生成</span></button>
+        <button className={view === "assets" ? "active" : ""} onClick={() => onView("assets")}><Folder size={22} /><span>资产</span></button>
+        <div className="rail-spacer" />
+        <div className="avatar" />
+      </nav>
+      <section className="session-list">
+        <header>
+          <h2>项目</h2>
+          <button title="新建项目" onClick={onCreateProject}><FolderPlus size={15} /></button>
+        </header>
+        <button className="session-row new" onClick={onCreateProject}>
+          <span className="session-thumb icon"><FolderPlus size={20} /></span>
+          <strong>新建项目</strong>
+        </button>
+        <p className="session-label">文件夹</p>
+        {projects.map((project) => {
+          const selected = project.id === selectedProjectId && view === "generate";
+          return (
+            <button key={project.id} className={`session-row ${selected ? "selected" : ""}`} onClick={() => onSelectProject(project.id)}>
+              <span className="session-thumb icon"><Folder size={18} /></span>
+              <strong>{project.name}</strong>
+              <ProjectNameEditor project={project} onRename={onRenameProject} />
+            </button>
+          );
+        })}
+      </section>
+    </aside>
+  );
+}
+
+function ProjectNameEditor({ project, onRename }: { project: VideoProject; onRename: (projectId: string, name: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(project.name);
+
+  useEffect(() => setValue(project.name), [project.name]);
+
+  function commit() {
+    const next = value.trim();
+    setEditing(false);
+    if (next && next !== project.name) onRename(project.id, next);
+    else setValue(project.name);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") commit();
+    if (event.key === "Escape") {
+      setValue(project.name);
+      setEditing(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        className="project-name-input"
+        value={value}
+        autoFocus
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => setValue(event.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={handleKeyDown}
+      />
+    );
+  }
+
+  return (
+    <span
+      className="project-rename"
+      title="重命名项目"
+      onClick={(event) => {
+        event.stopPropagation();
+        setEditing(true);
+      }}
+    >
+      <FilePenLine size={15} />
+    </span>
+  );
+}
+
+function projectName(projects: VideoProject[], id: string) {
+  return projects.find((project) => project.id === id)?.name ?? "默认项目";
+}
+
+function sortTasksForBottomStack(tasks: VideoTask[]) {
+  return tasks
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+function scrollTimelineToBottom(behavior: ScrollBehavior = "auto") {
+  window.scrollTo({ top: document.documentElement.scrollHeight, behavior });
+}
+
+function scrollTaskIntoView(taskId: string) {
+  window.requestAnimationFrame(() => {
+    document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(taskId)}"]`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  });
+}
+
+function initialSlots(mode: VideoMode): ReferenceSlot[] {
+  if (mode === "frames") {
+    return [
+      { id: "first", role: "first_frame", label: "首帧" },
+      { id: "last", role: "last_frame", label: "尾帧" }
+    ];
+  }
+  return [
+    { id: "ref-1", role: "reference", label: "参考内容 1" },
+    { id: "ref-2", role: "reference", label: "参考内容 2" },
+    { id: "ref-3", role: "reference", label: "参考内容 3" }
+  ];
+}
+
+function slotsFromTask(task: VideoTask): ReferenceSlot[] {
+  const mode = task.mode === "frames" ? "frames" : "multimodal";
+  const base = initialSlots(mode);
+  for (const reference of task.references ?? []) {
+    const url = reference.previewUrl || reference.sourceUrl;
+    const target = base.find((slot) => slot.role === reference.role && !slot.url) ?? base.find((slot) => slot.role === reference.role);
+    if (target) target.url = url;
+  }
+  return base;
+}
+
+function ReferenceSlots({ slots, mode, onSwapFrames, onUpload, onClear }: { slots: ReferenceSlot[]; mode: VideoMode; onSwapFrames: () => void; onUpload: (slotId: string, file: File) => void; onClear: (slotId: string) => void }) {
+  if (mode === "frames") {
+    const first = slots.find((slot) => slot.role === "first_frame") ?? slots[0];
+    const last = slots.find((slot) => slot.role === "last_frame") ?? slots[1];
+    return (
+      <div className="reference-strip frames">
+        <UploadSlot slot={first} onUpload={onUpload} onClear={onClear} />
+        <button className="frame-swap" onClick={onSwapFrames} title="交换首尾帧">⇆</button>
+        <UploadSlot slot={last} onUpload={onUpload} onClear={onClear} />
+      </div>
+    );
+  }
+  return (
+    <div className={`reference-strip ${mode}`}>
+      {slots.map((slot) => <UploadSlot key={slot.id} slot={slot} onUpload={onUpload} onClear={onClear} />)}
+    </div>
+  );
+}
+
+function UploadSlot({ slot, onUpload, onClear }: { slot: ReferenceSlot; onUpload: (slotId: string, file: File) => void; onClear: (slotId: string) => void }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <button
+      className={`upload-slot ${slot.url ? "filled" : ""}`}
+      onClick={() => inputRef.current?.click()}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        const file = event.dataTransfer.files[0];
+        if (file) onUpload(slot.id, file);
+      }}
+    >
+      {slot.uploading ? <Loader2 className="spin" size={20} /> : slot.url ? <img src={slot.url} alt={slot.label} /> : <ImagePlus size={22} />}
+      <span>{slot.uploading ? "上传中" : slot.label}</span>
+      {slot.url && <Trash2 className="slot-clear" size={14} onClick={(event) => { event.stopPropagation(); onClear(slot.id); }} />}
+      {slot.error && <small>{slot.error}</small>}
+      <input ref={inputRef} type="file" accept="image/*" hidden onChange={(event) => {
+        const file = event.currentTarget.files?.[0];
+        if (file) onUpload(slot.id, file);
+        event.currentTarget.value = "";
+      }} />
+    </button>
+  );
+}
+
+function MenuButton({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+  return <button className={`menu-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span><ChevronDown size={16} /></button>;
+}
+
+function FloatingMenu({ kind, mode, modelVersion, ratio, duration, onMode, onModel, onRatio, onDuration, onClose }: {
+  kind: "mode" | "model" | "ratio" | "duration";
+  mode: VideoMode;
+  modelVersion: VideoModelVersion;
+  ratio: VideoRatio;
+  duration: number;
+  onMode: (value: VideoMode) => void;
+  onModel: (value: VideoModelVersion) => void;
+  onRatio: (value: VideoRatio) => void;
+  onDuration: (value: number) => void;
+  onClose: () => void;
+}) {
+  if (kind === "ratio") {
+    return <div className="floating-menu ratio-menu"><p>选择比例</p>{ratioOptions.map((item) => <button key={item} className={ratio === item ? "selected" : ""} onClick={() => { onRatio(item); onClose(); }}><RatioIcon ratio={item} />{item}</button>)}</div>;
+  }
+  if (kind === "duration") {
+    return <div className="floating-menu duration-menu"><p>选择视频生成时长</p>{durationOptions.map((item) => <button key={item} className={duration === item ? "selected" : ""} onClick={() => { onDuration(item); onClose(); }}><Clock3 size={18} />{item}s{duration === item && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
+  if (kind === "model") {
+    return <div className="floating-menu model-menu"><p>选择模型</p>{modelOptions.map((item) => <button key={item.value} className={modelVersion === item.value ? "selected" : ""} onClick={() => { onModel(item.value); onClose(); }}><Film size={18} />{item.label}{modelVersion === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
+  return <div className="floating-menu mode-menu"><p>选择生成模式</p>{(["multimodal", "frames"] as VideoMode[]).map((item) => <button key={item} className={mode === item ? "selected" : ""} onClick={() => onMode(item)}><UploadCloud size={18} />{modeLabels[item]}{mode === item && <Check className="option-check" size={18} />}</button>)}</div>;
+}
+
+function RatioIcon({ ratio }: { ratio: string }) {
+  return <span className={`ratio-icon r-${ratio.replace(":", "-")}`} />;
+}
+
+function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete }: {
+  tasks: VideoTask[];
+  pollLogs: PollLog[];
+  onEdit: (task: VideoTask) => void;
+  onRegenerate: (task: VideoTask) => void;
+  onDelete: (taskId: string) => void;
+}) {
+  return (
+    <section className="asset-library">
+      <header>
+        <p>全局数据库</p>
+        <h1>生成视频资产</h1>
+      </header>
+      {!tasks.length && <section className="empty-state"><Film size={30} /><h1>暂无视频资产</h1><p>成功生成或下载后的视频会出现在这里。</p></section>}
+      <div className="asset-grid">
+        {tasks.map((task) => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            selected={false}
+            latestLog={pollLogs.find((log) => log.taskId === task.id)}
+            onEdit={() => onEdit(task)}
+            onRegenerate={() => onRegenerate(task)}
+            onDelete={() => onDelete(task.id)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete }: { task: VideoTask; selected: boolean; latestLog?: PollLog; onEdit: () => void; onRegenerate: () => void; onDelete: () => void }) {
+  const model = modelOptions.find((item) => item.value === task.modelVersion)?.label ?? "Seedance 2.0";
+  return (
+    <article className={`history-card ${task.status} ${selected ? "selected" : ""}`} data-task-id={task.id}>
+      <div className="prompt-line">
+        <ReferenceThumbs references={task.references ?? []} />
+        <p>{task.prompt}</p>
+        <span>{model}</span>
+        <span>{task.duration ?? 5}s</span>
+        <span>{modeLabels[(task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal"]}</span>
+        <span className={`status-badge ${task.status}`}>{taskStatusLabel(task, latestLog)}</span>
+      </div>
+      <div className="result-frame">
+        {videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls /> : <TaskPlaceholder status={task.status} />}
+      </div>
+      <div className="task-actions">
+        <button onClick={onEdit}><PencilLine size={18} />重新编辑</button>
+        <button onClick={onRegenerate}><CopyPlus size={18} />再次生成</button>
+        <button className="more-button"><RefreshCcw size={18} />{task.status}</button>
+        <button className="delete-record" onClick={onDelete} title="删除记录，不删除下载文件"><Trash2 size={16} /></button>
+      </div>
+      {task.errorMessage && <p className="task-error">{task.errorMessage}</p>}
+    </article>
+  );
+}
+
+function videoPreviewUrl(task: VideoTask) {
+  return task.downloadPath ? `/api/video-tasks/${task.id}/download` : task.videoUrl;
+}
+
+function taskStatusLabel(task: VideoTask, latestLog?: PollLog) {
+  if (task.status === "succeeded" && task.downloadPath) return "视频已下载";
+  if (task.status === "succeeded") return "生成完成";
+  return latestLog?.message.replace("视频任务状态：", "") || task.status;
+}
+
+function ReferenceThumbs({ references }: { references: VideoReference[] }) {
+  const visible = references.filter((reference) => reference.previewUrl || reference.sourceUrl).slice(0, 3);
+  if (!visible.length) return null;
+  return <div className="reference-thumbs">{visible.map((reference, index) => <img key={`${reference.previewUrl}-${index}`} src={reference.previewUrl || reference.sourceUrl} alt={reference.label || `参考 ${index + 1}`} />)}</div>;
+}
+
+function TaskPlaceholder({ status }: { status: VideoTask["status"] }) {
+  return <div className="task-placeholder"><Loader2 className={status === "running" || status === "queued" ? "spin" : ""} size={30} /><span>{status === "failed" ? "生成失败" : "等待生成结果"}</span></div>;
+}
+
+function ManagerApp() {
+  const [managerToken, setManagerToken] = useState(() => sessionStorage.getItem("sts-manager-token") || "");
+  const [authenticated, setAuthenticated] = useState(() => sessionStorage.getItem("sts-manager-auth") === "true" && Boolean(sessionStorage.getItem("sts-manager-token")));
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [settings, setSettings] = useState<RuntimeSettings | null>(null);
+  const [state, setState] = useState<AppState>(emptyState);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function refreshManager() {
+    const [settingsResponse, stateResponse] = await Promise.all([
+      fetch("/api/runtime-settings", { headers: { "x-sts-manager-token": managerToken } }),
+      fetch("/api/state")
+    ]);
+    setSettings(await settingsResponse.json());
+    setState(await stateResponse.json());
+  }
+
+  useEffect(() => {
+    if (!authenticated) return;
+    void refreshManager();
+    const timer = window.setInterval(refreshManager, 3000);
+    return () => window.clearInterval(timer);
+  }, [authenticated]);
+
+  async function login(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy("login");
+    setMessage("");
+    try {
+      const response = await fetch("/api/manager/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "登录失败");
+      sessionStorage.setItem("sts-manager-auth", "true");
+      sessionStorage.setItem("sts-manager-token", result.token);
+      setManagerToken(result.token);
+      setAuthenticated(true);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveSettings() {
+    if (!settings) return;
+    setBusy("settings");
+    setMessage("");
+    try {
+      const response = await fetch("/api/runtime-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-sts-manager-token": managerToken },
+        body: JSON.stringify(settings)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "保存失败");
+      setSettings(result);
+      setMessage("运行时参数已更新");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function hardDeleteTask(taskId: string) {
+    setBusy(`hard-delete-${taskId}`);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/manager/video-tasks/${taskId}`, {
+        method: "DELETE",
+        headers: { "x-sts-manager-token": managerToken }
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "删除失败");
+      await refreshManager();
+      setMessage("记录已永久删除");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (!authenticated) {
+    return (
+      <main className="manager-shell login">
+        <form className="manager-login" onSubmit={login}>
+          <ShieldCheck size={30} />
+          <h1>STS Manager</h1>
+          <p>输入管理账号后才能修改实时参数和永久删除记录。</p>
+          <label>
+            <span>账号</span>
+            <input value={username} onChange={(event) => setUsername(event.currentTarget.value)} autoComplete="username" />
+          </label>
+          <label>
+            <span>密码</span>
+            <input value={password} onChange={(event) => setPassword(event.currentTarget.value)} type="password" autoComplete="current-password" />
+          </label>
+          {message && <div className="manager-message error">{message}</div>}
+          <button className="manager-primary" disabled={busy === "login"}>{busy === "login" ? <Loader2 className="spin" size={18} /> : <KeyRound size={18} />}进入管理</button>
+        </form>
+      </main>
+    );
+  }
+
+  return (
+    <main className="manager-shell">
+      <aside className="manager-side">
+        <div className="manager-brand"><ShieldCheck size={22} />STS Manager</div>
+        <a href="/executor"><Sparkles size={18} />Executor</a>
+        <button onClick={() => { sessionStorage.removeItem("sts-manager-auth"); sessionStorage.removeItem("sts-manager-token"); setManagerToken(""); setAuthenticated(false); }}>退出登录</button>
+      </aside>
+      <section className="manager-main">
+        <header className="manager-header">
+          <div>
+            <p>实时配置</p>
+            <h1>关键参数与全局记录</h1>
+          </div>
+          <button className="manager-primary" onClick={saveSettings} disabled={!settings || busy === "settings"}>
+            {busy === "settings" ? <Loader2 className="spin" size={18} /> : <Save size={18} />}保存参数
           </button>
         </header>
-
-        {toast && <div className="alert"><ShieldAlert size={18} />{toast}</div>}
-
-        <section className="grid">
-          <Panel id="groups" title="1. 创建或选择素材组" icon={<Layers3 />}>
-            <div className="form-row">
-              <label>名称<input value={groupName} maxLength={64} onChange={(event) => setGroupName(event.target.value)} /></label>
-              <label>描述<input value={groupDescription} maxLength={300} onChange={(event) => setGroupDescription(event.target.value)} /></label>
-            </div>
-            {!assetsAPIReady && <div className="notice warn">缺少 VOLCENGINE_AK / VOLCENGINE_SK，素材库接口暂不可用；可以先用文生视频。</div>}
-            <button disabled={busy === "group" || !groupName || !assetsAPIReady} onClick={submitGroup}>
-              {busy === "group" ? <Loader2 className="spin" size={16} /> : <Box size={16} />}创建 Asset Group
-            </button>
-            <div className="list">
-              {state.assetGroups.map((group) => (
-                <button key={group.id} className={`list-item ${selectedGroupId === group.id ? "selected" : ""}`} onClick={() => setSelectedGroupId(group.id)}>
-                  <strong>{group.name}</strong>
-                  <span>{group.id}</span>
-                </button>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel id="assets" title="2. 上传公网素材 URL" icon={<Image />}>
-            <div className="notice">按文档要求仅支持公网 HTTPS URL，不支持 base64。本地文件请先上传到可访问地址。</div>
-            {!assetsAPIReady && <div className="notice warn">填入 Assets AK/SK 后才能创建和轮询素材资产。</div>}
-            <div className="form-row">
-              <label>素材名<input value={assetName} maxLength={64} onChange={(event) => setAssetName(event.target.value)} /></label>
-              <label>类型<select value={assetType} onChange={(event) => setAssetType(event.target.value as AssetType)}><option>Image</option><option>Video</option><option>Audio</option></select></label>
-            </div>
-            <label>公网 URL<input value={assetUrl} placeholder="https://example.com/reference.png" onChange={(event) => setAssetUrl(event.target.value)} /></label>
-            <button disabled={busy === "asset" || !selectedGroupId || !assetUrl || !assetsAPIReady} onClick={submitAsset}>
-              {busy === "asset" ? <Loader2 className="spin" size={16} /> : <Clock3 size={16} />}创建 Asset 并轮询
-            </button>
-            <div className="asset-list">
-              {state.assets.map((asset) => (
-                <article key={asset.id} className="asset-row">
-                  <div>
-                    <strong>{asset.name || asset.id}</strong>
-                    <span>{asset.assetType} · {asset.status}</span>
-                    {asset.errorMessage && <small>{asset.errorMessage}</small>}
-                  </div>
-                  <div className="row-actions">
-                    <button className="icon-button" onClick={() => pollAsset(asset.id)} title="查询素材状态"><RefreshCcw size={15} /></button>
-                    <button className="icon-button danger" onClick={() => removeAsset(asset.id)} title="删除素材"><Trash2 size={15} /></button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel id="video" title="3. 选择生成形式并提交视频" icon={<FileVideo />}>
-            <div className="segmented" role="tablist" aria-label="生成形式">
-              <button className={generationMode === "text" ? "active" : ""} onClick={() => setGenerationMode("text")}>文生视频</button>
-              <button className={generationMode === "asset" ? "active" : ""} onClick={() => setGenerationMode("asset")}>素材参考生成</button>
-            </div>
-            {generationMode === "text" ? (
-              <div className="notice">文生视频不需要 Assets API，也不需要选择素材；只使用 Ark 视频 API Key 和当前模型。</div>
-            ) : (
-              <div className="selected-assets">
-                {activeAssets.map((asset, index) => (
-                  <button key={asset.id} className={selectedAssetIds.includes(asset.id) ? "chip active" : "chip"} onClick={() => toggleAsset(asset.id)}>
-                    图片 {index + 1} · {asset.name || asset.id.slice(0, 12)}
-                  </button>
-                ))}
-                {!activeAssets.length && <span className="empty">暂无 Active 素材</span>}
+        {message && <div className={`manager-message ${message.includes("失败") || message.includes("错误") ? "error" : ""}`}>{message}</div>}
+        <section className="manager-grid">
+          <section className="manager-card settings-card">
+            <h2><Settings2 size={19} />运行时参数</h2>
+            {settings && (
+              <div className="settings-form">
+                <SettingField label="EP" value={settings.arkVideoModel} onChange={(value) => setSettings({ ...settings, arkVideoModel: value })} />
+                <SettingField label="APIKey" value={settings.arkAPIKey} onChange={(value) => setSettings({ ...settings, arkAPIKey: value })} />
+                <SettingField label="请求地址" value={settings.arkBaseURL} onChange={(value) => setSettings({ ...settings, arkBaseURL: value })} />
+                <SettingField label="图床地址" value={settings.imageHostURL} onChange={(value) => setSettings({ ...settings, imageHostURL: value })} />
               </div>
             )}
-            <label>Prompt<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
-            <button disabled={busy === "video" || !canGenerate} onClick={submitVideoTask}>
-              {busy === "video" ? <Loader2 className="spin" size={16} /> : <Play size={16} />}提交视频任务
-            </button>
-            {latestTask && <TaskCard task={latestTask} logs={state.pollLogs.filter((log) => log.taskId === latestTask.id)} />}
-          </Panel>
-
-          <Panel id="downloads" title="4. 下载记录" icon={<Download />}>
-            <button className="secondary-button" disabled={busy === "open-download-folder"} onClick={openDownloadFolder}>
-              {busy === "open-download-folder" ? <Loader2 className="spin" size={16} /> : <FolderOpen size={16} />}打开下载文件夹
-            </button>
-            <div className="download-list">
-              {state.videoTasks.filter((task) => task.downloadPath).map((task) => (
-                <article key={task.id} className="download-row">
-                  <CheckCircle2 size={18} />
-                  <div>
-                    <strong>{task.downloadPath}</strong>
-                    <span>{task.remoteTaskId}</span>
-                  </div>
-                  <a className="download-link" href={`/api/video-tasks/${task.id}/download`}>
-                    <Download size={15} />下载 MP4
-                  </a>
-                </article>
+          </section>
+          <section className="manager-card records-card">
+            <h2><HardDrive size={19} />生成记录</h2>
+            <div className="record-table">
+              <div className="record-row head">
+                <span>状态</span>
+                <span>项目/时间</span>
+                <span>提示词</span>
+                <span>文件</span>
+                <span>操作</span>
+              </div>
+              {state.videoTasks.map((task) => (
+                <div className="record-row" key={task.id}>
+                  <span><i className={`status-dot ${task.status}`} />{task.hiddenAt ? "已隐藏" : taskStatusLabel(task)}</span>
+                  <span>{projectName(state.videoProjects, task.projectId ?? "")}<small>{formatDate(task.createdAt)}</small></span>
+                  <span className="record-prompt">{task.prompt}</span>
+                  <span>{task.downloadPath ? "本地视频" : task.videoUrl ? "远程视频" : "未生成"}</span>
+                  <button className="hard-delete" disabled={busy === `hard-delete-${task.id}`} onClick={() => hardDeleteTask(task.id)}>
+                    <Trash2 size={15} />永久删除
+                  </button>
+                </div>
               ))}
-              {!state.videoTasks.some((task) => task.downloadPath) && <p className="empty">生成成功后会自动下载到后端本地目录。</p>}
+              {!state.videoTasks.length && <div className="record-empty">暂无生成记录</div>}
             </div>
-          </Panel>
+          </section>
         </section>
       </section>
     </main>
   );
 }
 
-function StatusLine({ ok, label }: { ok: boolean; label: string }) {
-  return <p className={ok ? "status ok" : "status warn"}>{ok ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}{label}</p>;
-}
-
-function Panel({ id, title, icon, children }: { id: string; title: string; icon: React.ReactNode; children: React.ReactNode }) {
-  return <section id={id} className="panel"><h2>{React.cloneElement(icon as React.ReactElement<{ size?: number }>, { size: 18 })}{title}</h2>{children}</section>;
-}
-
-function TaskCard({ task, logs }: { task: VideoTask; logs: PollLog[] }) {
+function SettingField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
-    <article className={`task-card ${task.status}`}>
-      <div>
-        <strong>{task.status}</strong>
-        <span>{task.remoteTaskId || "等待提交到远端"}</span>
-      </div>
-      {task.errorMessage && <p className="task-error">{task.errorMessage}</p>}
-      {task.downloadPath && <p className="task-download">{task.downloadPath}</p>}
-      <div className="logs">
-        {logs.slice(0, 5).map((log) => <span key={log.id}>{new Date(log.createdAt).toLocaleTimeString()} · {log.message}</span>)}
-      </div>
-    </article>
+    <label className="setting-field">
+      <span>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.currentTarget.value)} />
+    </label>
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function Root() {
+  const path = window.location.pathname;
+  useEffect(() => {
+    if (path === "/") window.history.replaceState(null, "", "/executor");
+  }, [path]);
+  if (path === "/STSManager" || path === "/manager") return <ManagerApp />;
+  return <App />;
+}
+
+createRoot(document.getElementById("root")!).render(<Root />);

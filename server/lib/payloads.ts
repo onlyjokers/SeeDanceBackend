@@ -1,4 +1,19 @@
 export type AssetType = "Image" | "Video" | "Audio";
+export type VideoMode = "text" | "multimodal" | "frames";
+export type ReferenceTransport = "asset" | "url";
+export type VideoModelVersion = "seedance2.0fast_vip" | "seedance2.0fast" | "seedance2.0" | "seedance2.0_vip";
+export type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
+export type VideoReferenceRole = "reference" | "first_frame" | "last_frame";
+
+export const videoModelVersions: VideoModelVersion[] = [
+  "seedance2.0fast_vip",
+  "seedance2.0fast",
+  "seedance2.0",
+  "seedance2.0_vip"
+];
+
+export const videoRatios: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+export const videoDurations = Array.from({ length: 12 }, (_, index) => index + 4);
 
 export interface CreateAssetGroupInput {
   name: string;
@@ -20,10 +35,38 @@ export interface VideoAssetInput {
   label?: string;
 }
 
+export interface VideoReferenceInput {
+  assetId?: string;
+  sourceUrl?: string;
+  previewUrl?: string;
+  assetType: AssetType;
+  role: VideoReferenceRole;
+  label?: string;
+}
+
 export interface VideoTaskInput {
-  model: string;
+  modelVersion: VideoModelVersion;
   prompt: string;
-  assets: VideoAssetInput[];
+  mode: VideoMode;
+  ratio: VideoRatio;
+  duration: number;
+  references: VideoReferenceInput[];
+}
+
+interface VideoContentItem {
+  type: string;
+  text?: string;
+  image_url?: { url: string | undefined };
+  video_url?: { url: string | undefined };
+  role?: string;
+}
+
+interface VideoTaskPayload {
+  model: VideoModelVersion;
+  duration: number;
+  video_resolution: "720p";
+  ratio?: VideoRatio;
+  content: VideoContentItem[];
 }
 
 export function buildCreateAssetGroupPayload(input: CreateAssetGroupInput) {
@@ -45,23 +88,35 @@ export function buildCreateAssetPayload(input: CreateAssetInput) {
   };
 }
 
-export function buildVideoTaskPayload(input: VideoTaskInput) {
-  return {
-    model: input.model,
+export function buildVideoTaskPayload(input: VideoTaskInput): VideoTaskPayload {
+  const payload: VideoTaskPayload = {
+    model: input.modelVersion,
+    duration: input.duration,
+    video_resolution: "720p",
     content: [
       {
         type: "text",
         text: input.prompt
       },
-      ...input.assets.map((asset) => ({
-        type: asset.assetType === "Video" ? "video_url" : "image_url",
-        [asset.assetType === "Video" ? "video_url" : "image_url"]: {
-          url: `asset://${asset.id}`
-        },
-        role: asset.assetType === "Video" ? "reference_video" : "reference_image"
-      }))
+      ...input.references.map((reference) => {
+        const field = reference.assetType === "Video" ? "video_url" : "image_url";
+        return {
+          type: field,
+          [field]: {
+            url: reference.assetId ? `asset://${reference.assetId}` : reference.sourceUrl
+          },
+          role: payloadReferenceRole(reference)
+        };
+      })
     ]
   };
+  if (input.mode !== "frames") payload.ratio = input.ratio;
+  return payload;
+}
+
+function payloadReferenceRole(reference: VideoReferenceInput) {
+  if (reference.role === "first_frame" || reference.role === "last_frame") return reference.role;
+  return reference.assetType === "Video" ? "reference_video" : "reference_image";
 }
 
 export function validatePublicAssetUrl(raw: string): { ok: boolean; message?: string } {

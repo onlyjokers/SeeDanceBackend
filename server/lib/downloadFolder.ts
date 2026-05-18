@@ -19,6 +19,10 @@ export function getDownloadPathForTask(task: VideoTask) {
   return resolve(task.downloadPath);
 }
 
+export function getPreviewUrlForTask(task: VideoTask) {
+  return task.downloadPath ? `/api/video-tasks/${task.id}/download` : task.videoUrl;
+}
+
 const systemFolderOpener: FolderOpener = {
   open(path) {
     const { command, args } = openCommand(path);

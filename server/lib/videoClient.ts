@@ -4,36 +4,38 @@ import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { AppConfig } from "./config.js";
-import { buildVideoTaskPayload } from "./payloads.js";
-import type { Asset } from "../types.js";
+import { buildVideoTaskPayload, type VideoTaskInput } from "./payloads.js";
+import type { RuntimeSettings } from "../types.js";
+
+type RuntimeSettingsProvider = () => RuntimeSettings | Promise<RuntimeSettings>;
 
 export class VideoClient {
-  constructor(private readonly config: AppConfig) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly runtimeSettings?: RuntimeSettingsProvider
+  ) {}
 
   isConfigured() {
     return Boolean(this.config.arkAPIKey);
   }
 
-  async createTask(prompt: string, assets: Asset[]) {
-    if (!this.isConfigured()) throw new Error("缺少 ARK_API_KEY，无法创建视频任务。");
-    const payload = buildVideoTaskPayload({
-      model: this.config.arkVideoModel,
-      prompt,
-      assets: assets.map((asset, index) => ({
-        id: asset.id,
-        assetType: asset.assetType,
-        label: `图片 ${index + 1}`
-      }))
-    });
-    const raw = await this.call("/api/v3/contents/generations/tasks", "POST", payload);
+  async createTask(input: VideoTaskInput) {
+    const settings = await this.settings();
+    if (!settings.arkAPIKey) throw new Error("缺少 ARK_API_KEY，无法创建视频任务。");
+    const payload = {
+      ...buildVideoTaskPayload(input),
+      model: settings.arkVideoModel
+    };
+    const raw = await this.call(settings, "/api/v3/contents/generations/tasks", "POST", payload);
     const remoteTaskId = findFirstString(raw, ["id", "task_id", "taskId"]);
     if (!remoteTaskId) throw new Error("视频任务响应里没有 task id。");
     return { remoteTaskId, raw };
   }
 
   async getTask(remoteTaskId: string) {
-    if (!this.isConfigured()) throw new Error("缺少 ARK_API_KEY，无法查询视频任务。");
-    const raw = await this.call(`/api/v3/contents/generations/tasks/${remoteTaskId}`, "GET");
+    const settings = await this.settings();
+    if (!settings.arkAPIKey) throw new Error("缺少 ARK_API_KEY，无法查询视频任务。");
+    const raw = await this.call(settings, `/api/v3/contents/generations/tasks/${remoteTaskId}`, "GET");
     return {
       status: normalizeStatus(findFirstString(raw, ["status", "state"])),
       videoUrl: findVideoUrl(raw),
@@ -54,11 +56,20 @@ export class VideoClient {
     return path;
   }
 
-  private async call(path: string, method: "GET" | "POST", body?: unknown) {
-    const response = await fetch(`${this.config.arkBaseURL.replace(/\/$/, "")}${path}`, {
+  private async settings(): Promise<RuntimeSettings> {
+    return this.runtimeSettings ? await this.runtimeSettings() : {
+      arkAPIKey: this.config.arkAPIKey,
+      arkVideoModel: this.config.arkVideoModel,
+      arkBaseURL: this.config.arkBaseURL,
+      imageHostURL: this.config.imageHostURL
+    };
+  }
+
+  private async call(settings: RuntimeSettings, path: string, method: "GET" | "POST", body?: unknown) {
+    const response = await fetch(`${settings.arkBaseURL.replace(/\/$/, "")}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${this.config.arkAPIKey}`,
+        Authorization: `Bearer ${settings.arkAPIKey}`,
         ...(body ? { "Content-Type": "application/json" } : {})
       },
       body: body ? JSON.stringify(body) : undefined

@@ -10,6 +10,7 @@ export interface AppConfig {
   arkAPIKey: string;
   arkVideoModel: string;
   arkBaseURL: string;
+  imageHostURL: string;
   pollIntervalMs: number;
   pollTimeoutMs: number;
 }
@@ -23,8 +24,9 @@ export function loadConfig(): AppConfig {
     volcengineSK: process.env.VOLCENGINE_SK || "",
     volcengineRegion: process.env.VOLCENGINE_REGION || "cn-beijing",
     arkAPIKey: process.env.ARK_API_KEY || "",
-    arkVideoModel: process.env.ARK_VIDEO_MODEL || "ep-20260512140336-qdrjq",
+    arkVideoModel: process.env.ARK_VIDEO_MODEL || "ep-20260518141207-xbt4q",
     arkBaseURL: process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com",
+    imageHostURL: process.env.IMAGE_HOST_URL || "https://uguu.se/upload.php",
     pollIntervalMs: numberEnv("POLL_INTERVAL_SECONDS", 5) * 1000,
     pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 900) * 1000
   };
@@ -35,6 +37,8 @@ export function publicConfig(config: AppConfig) {
     assetsCredentialsConfigured: Boolean(config.volcengineAK && config.volcengineSK),
     arkAPIKeyConfigured: Boolean(config.arkAPIKey),
     arkVideoModel: config.arkVideoModel,
+    arkBaseURL: config.arkBaseURL,
+    imageHostURL: config.imageHostURL,
     volcengineRegion: config.volcengineRegion,
     pollIntervalSeconds: config.pollIntervalMs / 1000,
     pollTimeoutSeconds: config.pollTimeoutMs / 1000
