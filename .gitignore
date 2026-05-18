@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+.env
+.DS_Store
+*.tsbuildinfo
+node_modules/.tmp/
+.playwright-mcp/
+tmp/
+docs/*.docx
