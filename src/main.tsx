@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createRoot } from "react-dom/client";
+import { insertReferenceToken, labelForReferenceIndex } from "./promptReferences";
 import {
   ArrowUp,
   Check,
@@ -146,6 +147,7 @@ interface ReferenceSlot {
   id: string;
   role: ReferenceRole;
   label: string;
+  token?: string;
   url?: string;
   uploading?: boolean;
   error?: string;
@@ -186,6 +188,7 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [view, setView] = useState<"generate" | "assets">("generate");
   const didInitialScrollRef = useRef(false);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
   const activeProjectId = selectedProjectId ?? state.videoProjects[0]?.id ?? "";
   const visibleTasks = useMemo(() => state.videoTasks.filter((task) => !task.hiddenAt), [state.videoTasks]);
@@ -373,6 +376,12 @@ function App() {
     });
   }
 
+  function insertReference(slot: ReferenceSlot) {
+    const token = slot.token ?? slot.label.replace(/\s+/g, "");
+    setPrompt((value) => insertReferenceToken(value, token));
+    window.requestAnimationFrame(() => promptRef.current?.focus());
+  }
+
   const canSubmit = useMemo(() => {
     if (!config?.arkAPIKeyConfigured || !prompt.trim() || slots.some((slot) => slot.uploading)) return false;
     const filled = slots.filter((slot) => slot.url);
@@ -434,11 +443,12 @@ function App() {
       {view === "generate" && <section className="composer-wrap">
         {toast && <div className="toast">{toast}</div>}
         <div className="composer">
-          <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, error: "" } : slot))} />
+          <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, error: "" } : slot))} onInsertReference={insertReference} />
           <textarea
+            ref={promptRef}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @图片2 的动作。"}
+            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：@图片1 模仿 @图片2 的动作。"}
           />
           <div className="composer-controls">
             <MenuButton active={openMenu === "mode"} onClick={() => setOpenMenu(openMenu === "mode" ? null : "mode")} icon={<Sparkles size={18} />} label="视频生成" />
@@ -599,7 +609,8 @@ function initialSlots(mode: VideoMode): ReferenceSlot[] {
     ...Array.from({ length: multimodalReferenceLimit }, (_, index) => ({
       id: `ref-${index + 1}`,
       role: "reference" as const,
-      label: `参考内容 ${index + 1}`
+      label: `参考内容 ${index + 1}`,
+      token: labelForReferenceIndex(index)
     }))
   ];
 }
@@ -615,7 +626,7 @@ function slotsFromTask(task: VideoTask): ReferenceSlot[] {
   return base;
 }
 
-function ReferenceSlots({ slots, mode, onSwapFrames, onUpload, onClear }: { slots: ReferenceSlot[]; mode: VideoMode; onSwapFrames: () => void; onUpload: (slotId: string, file: File) => void; onClear: (slotId: string) => void }) {
+function ReferenceSlots({ slots, mode, onSwapFrames, onUpload, onClear, onInsertReference }: { slots: ReferenceSlot[]; mode: VideoMode; onSwapFrames: () => void; onUpload: (slotId: string, file: File) => void; onClear: (slotId: string) => void; onInsertReference: (slot: ReferenceSlot) => void }) {
   if (mode === "frames") {
     const first = slots.find((slot) => slot.role === "first_frame") ?? slots[0];
     const last = slots.find((slot) => slot.role === "last_frame") ?? slots[1];
@@ -629,12 +640,12 @@ function ReferenceSlots({ slots, mode, onSwapFrames, onUpload, onClear }: { slot
   }
   return (
     <div className={`reference-strip ${mode}`}>
-      {slots.map((slot) => <UploadSlot key={slot.id} slot={slot} onUpload={onUpload} onClear={onClear} />)}
+      {slots.map((slot) => <UploadSlot key={slot.id} slot={slot} onUpload={onUpload} onClear={onClear} onInsertReference={onInsertReference} />)}
     </div>
   );
 }
 
-function UploadSlot({ slot, onUpload, onClear }: { slot: ReferenceSlot; onUpload: (slotId: string, file: File) => void; onClear: (slotId: string) => void }) {
+function UploadSlot({ slot, onUpload, onClear, onInsertReference }: { slot: ReferenceSlot; onUpload: (slotId: string, file: File) => void; onClear: (slotId: string) => void; onInsertReference?: (slot: ReferenceSlot) => void }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   return (
     <button
@@ -649,6 +660,7 @@ function UploadSlot({ slot, onUpload, onClear }: { slot: ReferenceSlot; onUpload
     >
       {slot.uploading ? <Loader2 className="spin" size={20} /> : slot.url ? <img src={slot.url} alt={slot.label} /> : <ImagePlus size={22} />}
       <span>{slot.uploading ? "上传中" : slot.label}</span>
+      {onInsertReference && slot.token && <b className="reference-token" onClick={(event) => { event.stopPropagation(); onInsertReference(slot); }}>{`@${slot.token}`}</b>}
       {slot.url && <Trash2 className="slot-clear" size={14} onClick={(event) => { event.stopPropagation(); onClear(slot.id); }} />}
       {slot.error && <small>{slot.error}</small>}
       <input ref={inputRef} type="file" accept="image/*" hidden onChange={(event) => {
