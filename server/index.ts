@@ -208,8 +208,8 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   res.status(500).json({ error: message });
 });
 
-app.listen(config.port, "127.0.0.1", () => {
-  console.log(`SeeDance server listening on http://127.0.0.1:${config.port}`);
+app.listen(config.port, config.host, () => {
+  console.log(`SeeDance server listening on http://${config.host}:${config.port}`);
 });
 
 async function pollAsset(id: string, projectName: string) {

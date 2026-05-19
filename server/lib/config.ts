@@ -2,6 +2,7 @@ import "dotenv/config";
 
 export interface AppConfig {
   port: number;
+  host: string;
   databasePath: string;
   downloadDir: string;
   volcengineAK: string;
@@ -18,6 +19,7 @@ export interface AppConfig {
 export function loadConfig(): AppConfig {
   return {
     port: numberEnv("PORT", 8787),
+    host: process.env.HOST || "0.0.0.0",
     databasePath: process.env.DATABASE_PATH || "data/seendance.json",
     downloadDir: process.env.DOWNLOAD_DIR || "data/downloads",
     volcengineAK: process.env.VOLCENGINE_AK || "",
