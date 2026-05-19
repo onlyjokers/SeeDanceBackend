@@ -4,7 +4,7 @@ import { videoModelVersions, videoRatios } from "./payloads.js";
 export const videoTaskRequestSchema = z.object({
   projectId: z.string().optional(),
   mode: z.enum(["text", "multimodal", "frames"]).default("multimodal"),
-  referenceTransport: z.enum(["asset", "url"]).default("asset"),
+  referenceTransport: z.enum(["asset", "url"]).default("url"),
   prompt: z.string().min(1),
   modelVersion: z.enum(videoModelVersions).default("seedance2.0fast_vip"),
   ratio: z.enum(videoRatios).default("16:9"),

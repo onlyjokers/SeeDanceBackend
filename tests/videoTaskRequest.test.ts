@@ -10,7 +10,7 @@ describe("video task request schema", () => {
     })).toEqual({
       mode: "text",
       prompt: "城市街道延时摄影",
-      referenceTransport: "asset",
+      referenceTransport: "url",
       modelVersion: "seedance2.0fast_vip",
       ratio: "16:9",
       duration: 5,

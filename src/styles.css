@@ -36,8 +36,9 @@ button:disabled {
 }
 
 .dream-shell {
+  --composer-clearance: 224px;
   min-height: 100vh;
-  padding: 0 0 224px 360px;
+  padding: 0 0 var(--composer-clearance) 360px;
 }
 
 .dream-topbar {
@@ -86,10 +87,15 @@ button:disabled {
   width: min(820px, calc(100vw - 460px));
   min-height: calc(100vh - 290px);
   margin: 38px auto 0;
+  padding-bottom: calc(var(--composer-clearance) - 190px);
   display: flex;
   flex-direction: column-reverse;
   justify-content: flex-start;
   gap: 34px;
+}
+
+.dream-shell:has(.reference-strip.multimodal) {
+  --composer-clearance: 334px;
 }
 
 .date-heading {
@@ -1203,7 +1209,12 @@ button:disabled {
 
 @media (max-width: 900px) {
   .dream-shell {
-    padding: 0 0 310px;
+    --composer-clearance: 310px;
+    padding: 0 0 var(--composer-clearance);
+  }
+
+  .dream-shell:has(.reference-strip.multimodal) {
+    --composer-clearance: 350px;
   }
 
   .conversation-rail {

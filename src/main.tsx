@@ -175,7 +175,7 @@ function App() {
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
   const [mode, setMode] = useState<VideoMode>("frames");
-  const [referenceTransport, setReferenceTransport] = useState<ReferenceTransport>("asset");
+  const [referenceTransport, setReferenceTransport] = useState<ReferenceTransport>("url");
   const [modelVersion, setModelVersion] = useState<VideoModelVersion>("seedance2.0fast_vip");
   const [ratio, setRatio] = useState<VideoRatio>("16:9");
   const [duration, setDuration] = useState(5);
@@ -270,7 +270,7 @@ function App() {
 
   function restoreTask(task: VideoTask) {
     setMode((task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal");
-    setReferenceTransport(task.referenceTransport ?? "asset");
+    setReferenceTransport(task.referenceTransport ?? "url");
     setModelVersion(task.modelVersion ?? "seedance2.0fast_vip");
     setRatio(task.ratio ?? "16:9");
     setDuration(task.duration ?? 5);
@@ -282,7 +282,7 @@ function App() {
   function regenerateTask(task: VideoTask) {
     void submitVideoTask({
       mode: (task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal",
-      referenceTransport: task.referenceTransport ?? "asset",
+      referenceTransport: task.referenceTransport ?? "url",
       prompt: task.prompt,
       modelVersion: task.modelVersion ?? "seedance2.0fast_vip",
       ratio: task.ratio ?? "16:9",
@@ -377,7 +377,7 @@ function App() {
   }
 
   function insertReference(slot: ReferenceSlot) {
-    const token = slot.token ?? slot.label.replace(/\s+/g, "");
+    const token = slot.token ?? slot.label;
     setPrompt((value) => insertReferenceToken(value, token));
     window.requestAnimationFrame(() => promptRef.current?.focus());
   }
@@ -448,7 +448,7 @@ function App() {
             ref={promptRef}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：@图片1 模仿 @图片2 的动作。"}
+            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：图片 1 模仿图片 2 的动作。"}
           />
           <div className="composer-controls">
             <MenuButton active={openMenu === "mode"} onClick={() => setOpenMenu(openMenu === "mode" ? null : "mode")} icon={<Sparkles size={18} />} label="视频生成" />
@@ -660,7 +660,7 @@ function UploadSlot({ slot, onUpload, onClear, onInsertReference }: { slot: Refe
     >
       {slot.uploading ? <Loader2 className="spin" size={20} /> : slot.url ? <img src={slot.url} alt={slot.label} /> : <ImagePlus size={22} />}
       <span>{slot.uploading ? "上传中" : slot.label}</span>
-      {onInsertReference && slot.token && <b className="reference-token" onClick={(event) => { event.stopPropagation(); onInsertReference(slot); }}>{`@${slot.token}`}</b>}
+      {onInsertReference && slot.token && <b className="reference-token" onClick={(event) => { event.stopPropagation(); onInsertReference(slot); }}>{`@${slot.token.replace(/\s+/g, "")}`}</b>}
       {slot.url && <Trash2 className="slot-clear" size={14} onClick={(event) => { event.stopPropagation(); onClear(slot.id); }} />}
       {slot.error && <small>{slot.error}</small>}
       <input ref={inputRef} type="file" accept="image/*" hidden onChange={(event) => {
