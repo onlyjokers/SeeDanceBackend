@@ -1,5 +1,6 @@
 import express from "express";
 import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { z } from "zod";
 import { loadConfig, publicConfig } from "./lib/config.js";
 import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createVideoTask, createVideoProject, ensureDefaultVideoProject, getRuntimeSettings, hardDeleteVideoTaskRecord, hideVideoTaskRecord, renameVideoProject, updateRuntimeSettings } from "./lib/db.js";
@@ -10,6 +11,7 @@ import { validatePublicAssetUrl, type AssetType, type VideoReferenceInput } from
 import { parseVideoTaskRequest } from "./lib/requestSchemas.js";
 import { getDownloadPathForTask, openDownloadFolder } from "./lib/downloadFolder.js";
 import { uploadImageToTemporaryHost } from "./lib/uploadProvider.js";
+import { mountStaticClient } from "./lib/staticRouter.js";
 
 const config = loadConfig();
 const db = await openDB(config.databasePath);
@@ -202,6 +204,8 @@ app.delete("/api/manager/video-tasks/:id", asyncHandler(async (req, res) => {
   await hardDeleteVideoTaskRecord(db, id);
   res.json({ ok: true });
 }));
+
+mountStaticClient(app, resolve(process.cwd(), "dist"));
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = err instanceof Error ? err.message : String(err);
