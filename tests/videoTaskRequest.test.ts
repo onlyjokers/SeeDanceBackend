@@ -52,17 +52,30 @@ describe("video task request schema", () => {
     })).toThrow("首尾帧模式需要上传首帧和尾帧");
   });
 
-  it("limits all-around references to three images", () => {
+  it("allows up to nine all-around reference images", () => {
+    expect(parseVideoTaskRequest({
+      mode: "multimodal",
+      prompt: "参考这些图片生成",
+      references: Array.from({ length: 9 }, (_, index) => ({
+        role: "reference",
+        sourceUrl: `https://litter.catbox.moe/${index + 1}.png`,
+        previewUrl: `https://litter.catbox.moe/${index + 1}.png`,
+        assetType: "Image"
+      }))
+    }).references).toHaveLength(9);
+  });
+
+  it("rejects the tenth all-around reference image", () => {
     expect(() => parseVideoTaskRequest({
       mode: "multimodal",
       prompt: "参考这些图片生成",
-      references: [1, 2, 3, 4].map((index) => ({
+      references: Array.from({ length: 10 }, (_, index) => ({
         role: "reference",
-        sourceUrl: `https://litter.catbox.moe/${index}.png`,
-        previewUrl: `https://litter.catbox.moe/${index}.png`,
+        sourceUrl: `https://litter.catbox.moe/${index + 1}.png`,
+        previewUrl: `https://litter.catbox.moe/${index + 1}.png`,
         assetType: "Image"
       }))
-    })).toThrow("全能参考最多支持 3 张图片");
+    })).toThrow("全能参考最多支持 9 张图片");
   });
 
   it("rejects unsupported model, ratio, and duration values", () => {

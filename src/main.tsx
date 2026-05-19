@@ -12,6 +12,7 @@ import {
   Folder,
   FolderPlus,
   HardDrive,
+  BarChart3,
   ImagePlus,
   KeyRound,
   Loader2,
@@ -118,6 +119,22 @@ interface AppState {
   runtimeSettings?: RuntimeSettings;
 }
 
+interface LocalUsageSummary {
+  source: "local";
+  credentialsRequired: false;
+  totals: {
+    requests: number;
+    visible: number;
+    hidden: number;
+    downloaded: number;
+    referenceImages: number;
+  };
+  byStatus: Record<VideoTask["status"], number>;
+  byProject: Array<{ projectId: string; projectName: string; requests: number; succeeded: number; failed: number; hidden: number }>;
+  byModel: Array<{ modelVersion: string; requests: number; succeeded: number; failed: number }>;
+  byDay: Array<{ day: string; requests: number }>;
+}
+
 interface VideoProject {
   id: string;
   name: string;
@@ -145,6 +162,7 @@ const modelOptions: Array<{ value: VideoModelVersion; label: string; short: stri
 
 const ratioOptions: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 const durationOptions = Array.from({ length: 12 }, (_, index) => index + 4);
+const multimodalReferenceLimit = 9;
 
 const modeLabels: Record<VideoMode, string> = {
   multimodal: "全能参考",
@@ -359,7 +377,7 @@ function App() {
     if (!config?.arkAPIKeyConfigured || !prompt.trim() || slots.some((slot) => slot.uploading)) return false;
     const filled = slots.filter((slot) => slot.url);
     if (mode === "frames") return filled.some((slot) => slot.role === "first_frame") && filled.some((slot) => slot.role === "last_frame");
-    return filled.length > 0 && filled.length <= 3;
+    return filled.length > 0 && filled.length <= multimodalReferenceLimit;
   }, [config?.arkAPIKeyConfigured, mode, prompt, slots]);
 
   return (
@@ -420,7 +438,7 @@ function App() {
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多3个参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @图片2 的动作。"}
+            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @图片2 的动作。"}
           />
           <div className="composer-controls">
             <MenuButton active={openMenu === "mode"} onClick={() => setOpenMenu(openMenu === "mode" ? null : "mode")} icon={<Sparkles size={18} />} label="视频生成" />
@@ -578,9 +596,11 @@ function initialSlots(mode: VideoMode): ReferenceSlot[] {
     ];
   }
   return [
-    { id: "ref-1", role: "reference", label: "参考内容 1" },
-    { id: "ref-2", role: "reference", label: "参考内容 2" },
-    { id: "ref-3", role: "reference", label: "参考内容 3" }
+    ...Array.from({ length: multimodalReferenceLimit }, (_, index) => ({
+      id: `ref-${index + 1}`,
+      role: "reference" as const,
+      label: `参考内容 ${index + 1}`
+    }))
   ];
 }
 
@@ -740,9 +760,9 @@ function taskStatusLabel(task: VideoTask, latestLog?: PollLog) {
 }
 
 function ReferenceThumbs({ references }: { references: VideoReference[] }) {
-  const visible = references.filter((reference) => reference.previewUrl || reference.sourceUrl).slice(0, 3);
+  const visible = references.filter((reference) => reference.previewUrl || reference.sourceUrl).slice(0, 9);
   if (!visible.length) return null;
-  return <div className="reference-thumbs">{visible.map((reference, index) => <img key={`${reference.previewUrl}-${index}`} src={reference.previewUrl || reference.sourceUrl} alt={reference.label || `参考 ${index + 1}`} />)}</div>;
+  return <div className="reference-thumbs">{visible.slice(0, 4).map((reference, index) => <img key={`${reference.previewUrl}-${index}`} src={reference.previewUrl || reference.sourceUrl} alt={reference.label || `参考 ${index + 1}`} />)}{visible.length > 4 && <span>+{visible.length - 4}</span>}</div>;
 }
 
 function TaskPlaceholder({ status }: { status: VideoTask["status"] }) {
@@ -756,16 +776,20 @@ function ManagerApp() {
   const [password, setPassword] = useState("");
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
+  const [localUsage, setLocalUsage] = useState<LocalUsageSummary | null>(null);
+  const [managerView, setManagerView] = useState<"dashboard" | "records">("dashboard");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
   async function refreshManager() {
-    const [settingsResponse, stateResponse] = await Promise.all([
+    const [settingsResponse, stateResponse, localUsageResponse] = await Promise.all([
       fetch("/api/runtime-settings", { headers: { "x-sts-manager-token": managerToken } }),
-      fetch("/api/state")
+      fetch("/api/state"),
+      fetch("/api/manager/usage/local", { headers: { "x-sts-manager-token": managerToken } })
     ]);
     setSettings(await settingsResponse.json());
     setState(await stateResponse.json());
+    setLocalUsage(await localUsageResponse.json());
   }
 
   useEffect(() => {
@@ -838,6 +862,24 @@ function ManagerApp() {
     }
   }
 
+  async function openVideoDatabase() {
+    setBusy("open-database");
+    setMessage("");
+    try {
+      const response = await fetch("/api/downloads/open-folder", {
+        method: "POST",
+        headers: { "x-sts-manager-token": managerToken }
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "打开视频数据库失败");
+      setMessage(`视频数据库已打开：${result.path}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
   if (!authenticated) {
     return (
       <main className="manager-shell login">
@@ -864,21 +906,26 @@ function ManagerApp() {
     <main className="manager-shell">
       <aside className="manager-side">
         <div className="manager-brand"><ShieldCheck size={22} />STS Manager</div>
+        <button className={managerView === "dashboard" ? "active" : ""} onClick={() => setManagerView("dashboard")}><BarChart3 size={18} />用量与配置</button>
+        <button className={managerView === "records" ? "active" : ""} onClick={() => setManagerView("records")}><HardDrive size={18} />生成记录</button>
         <a href="/executor"><Sparkles size={18} />Executor</a>
         <button onClick={() => { sessionStorage.removeItem("sts-manager-auth"); sessionStorage.removeItem("sts-manager-token"); setManagerToken(""); setAuthenticated(false); }}>退出登录</button>
       </aside>
       <section className="manager-main">
         <header className="manager-header">
           <div>
-            <p>实时配置</p>
-            <h1>关键参数与全局记录</h1>
+            <p>{managerView === "records" ? "全局数据库" : "实时配置"}</p>
+            <h1>{managerView === "records" ? "生成记录" : "用量检测与关键参数"}</h1>
           </div>
-          <button className="manager-primary" onClick={saveSettings} disabled={!settings || busy === "settings"}>
+          {managerView === "dashboard" && <button className="manager-primary" onClick={saveSettings} disabled={!settings || busy === "settings"}>
             {busy === "settings" ? <Loader2 className="spin" size={18} /> : <Save size={18} />}保存参数
-          </button>
+          </button>}
+          {managerView === "records" && <button className="manager-primary" onClick={openVideoDatabase} disabled={busy === "open-database"}>
+            {busy === "open-database" ? <Loader2 className="spin" size={18} /> : <Folder size={18} />}打开视频数据库
+          </button>}
         </header>
         {message && <div className={`manager-message ${message.includes("失败") || message.includes("错误") ? "error" : ""}`}>{message}</div>}
-        <section className="manager-grid">
+        {managerView === "dashboard" ? <section className="manager-grid">
           <section className="manager-card settings-card">
             <h2><Settings2 size={19} />运行时参数</h2>
             {settings && (
@@ -890,31 +937,13 @@ function ManagerApp() {
               </div>
             )}
           </section>
-          <section className="manager-card records-card">
-            <h2><HardDrive size={19} />生成记录</h2>
-            <div className="record-table">
-              <div className="record-row head">
-                <span>状态</span>
-                <span>项目/时间</span>
-                <span>提示词</span>
-                <span>文件</span>
-                <span>操作</span>
-              </div>
-              {state.videoTasks.map((task) => (
-                <div className="record-row" key={task.id}>
-                  <span><i className={`status-dot ${task.status}`} />{task.hiddenAt ? "已隐藏" : taskStatusLabel(task)}</span>
-                  <span>{projectName(state.videoProjects, task.projectId ?? "")}<small>{formatDate(task.createdAt)}</small></span>
-                  <span className="record-prompt">{task.prompt}</span>
-                  <span>{task.downloadPath ? "本地视频" : task.videoUrl ? "远程视频" : "未生成"}</span>
-                  <button className="hard-delete" disabled={busy === `hard-delete-${task.id}`} onClick={() => hardDeleteTask(task.id)}>
-                    <Trash2 size={15} />永久删除
-                  </button>
-                </div>
-              ))}
-              {!state.videoTasks.length && <div className="record-empty">暂无生成记录</div>}
-            </div>
+          <section className="manager-card usage-card">
+            <h2><BarChart3 size={19} />请求量统计</h2>
+            <LocalUsagePanel usage={localUsage} />
           </section>
-        </section>
+        </section> : (
+          <ManagerRecords tasks={state.videoTasks} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} />
+        )}
       </section>
     </main>
   );
@@ -927,6 +956,81 @@ function SettingField({ label, value, onChange }: { label: string; value: string
       <input value={value} onChange={(event) => onChange(event.currentTarget.value)} />
     </label>
   );
+}
+
+function LocalUsagePanel({ usage }: { usage: LocalUsageSummary | null }) {
+  if (!usage) return <div className="record-empty">正在读取本地统计</div>;
+  return (
+    <div className="usage-panel">
+      <p className="usage-note">这里统计的是本系统实际提交的任务，不需要额外的火山 AK/SK。</p>
+      <div className="usage-metrics">
+        <UsageMetric label="总请求" value={usage.totals.requests} />
+        <UsageMetric label="成功" value={usage.byStatus.succeeded} />
+        <UsageMetric label="失败" value={usage.byStatus.failed} />
+        <UsageMetric label="已下载" value={usage.totals.downloaded} />
+        <UsageMetric label="隐藏记录" value={usage.totals.hidden} />
+        <UsageMetric label="参考图" value={usage.totals.referenceImages} />
+      </div>
+      <div className="usage-lists">
+        <UsageList title="项目请求" rows={usage.byProject.slice(0, 5).map((item) => [item.projectName, `${item.requests} 次 / 成功 ${item.succeeded}`])} />
+        <UsageList title="模型请求" rows={usage.byModel.slice(0, 5).map((item) => [modelLabel(item.modelVersion), `${item.requests} 次`])} />
+        <UsageList title="最近日期" rows={usage.byDay.slice(-5).reverse().map((item) => [item.day, `${item.requests} 次`])} />
+      </div>
+    </div>
+  );
+}
+
+function ManagerRecords({ tasks, projects, busy, onHardDelete }: { tasks: VideoTask[]; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => void }) {
+  if (!tasks.length) return <section className="manager-record-empty"><Film size={30} /><h2>暂无生成记录</h2><p>所有项目的生成任务都会出现在这里。</p></section>;
+  return (
+    <section className="manager-record-grid">
+      {tasks.map((task) => (
+        <article className={`manager-record-card ${task.status}`} key={task.id}>
+          <div className="manager-record-preview">
+            {videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls preload="metadata" /> : <TaskPlaceholder status={task.status} />}
+          </div>
+          <div className="manager-record-body">
+            <div className="manager-record-meta">
+              <span><i className={`status-dot ${task.status}`} />{task.hiddenAt ? "已隐藏" : taskStatusLabel(task)}</span>
+              <span>{projectName(projects, task.projectId ?? "")}</span>
+              <span>{formatDate(task.createdAt)}</span>
+            </div>
+            <p>{task.prompt}</p>
+            <div className="manager-record-foot">
+              <span>{task.downloadPath ? "本地视频" : task.videoUrl ? "远程视频" : "未生成"}</span>
+              <button className="hard-delete" disabled={busy === `hard-delete-${task.id}`} onClick={() => onHardDelete(task.id)}>
+                <Trash2 size={15} />永久删除
+              </button>
+            </div>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function UsageMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="usage-metric">
+      <strong>{new Intl.NumberFormat("zh-CN").format(value)}</strong>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function UsageList({ title, rows }: { title: string; rows: string[][] }) {
+  return (
+    <section className="usage-list">
+      <h3>{title}</h3>
+      {rows.length ? rows.map(([label, value]) => (
+        <p key={`${label}-${value}`}><span>{label}</span><strong>{value}</strong></p>
+      )) : <p><span>暂无数据</span><strong>-</strong></p>}
+    </section>
+  );
+}
+
+function modelLabel(value: string) {
+  return modelOptions.find((item) => item.value === value)?.label ?? value;
 }
 
 function formatDate(value: string) {

@@ -12,6 +12,7 @@ import { parseVideoTaskRequest } from "./lib/requestSchemas.js";
 import { getDownloadPathForTask, openDownloadFolder } from "./lib/downloadFolder.js";
 import { uploadImageToTemporaryHost } from "./lib/uploadProvider.js";
 import { mountStaticClient } from "./lib/staticRouter.js";
+import { summarizeLocalUsage } from "./lib/usageStats.js";
 
 const config = loadConfig();
 const db = await openDB(config.databasePath);
@@ -50,6 +51,11 @@ app.patch("/api/runtime-settings", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
   const input = runtimeSettingsSchema.parse(req.body);
   res.json(await updateRuntimeSettings(db, input));
+}));
+
+app.get("/api/manager/usage/local", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(summarizeLocalUsage(db.data));
 }));
 
 app.post("/api/manager/login", asyncHandler(async (req, res) => {

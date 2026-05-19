@@ -18,11 +18,11 @@ export const videoTaskRequestSchema = z.object({
     label: z.string().optional()
   })).default([])
 }).superRefine((value, context) => {
-  if (value.mode === "multimodal" && value.references.length > 3) {
+  if (value.mode === "multimodal" && value.references.length > 9) {
     context.addIssue({
       code: "custom",
       path: ["references"],
-      message: "全能参考最多支持 3 张图片"
+      message: "全能参考最多支持 9 张图片"
     });
   }
   if (value.mode === "frames") {
