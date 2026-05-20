@@ -33,7 +33,7 @@ import "./styles.css";
 type AssetType = "Image" | "Video" | "Audio";
 type VideoMode = "multimodal" | "frames";
 type ReferenceTransport = "asset" | "url";
-type VideoModelVersion = "seedance2.0fast_vip" | "seedance2.0fast" | "seedance2.0" | "seedance2.0_vip";
+type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";
 type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
 type ReferenceRole = "reference" | "first_frame" | "last_frame";
 
@@ -156,11 +156,10 @@ interface ReferenceSlot {
 const emptyState: AppState = { assetGroups: [], assets: [], videoProjects: [], videoTasks: [], pollLogs: [] };
 
 const modelOptions: Array<{ value: VideoModelVersion; label: string; short: string }> = [
-  { value: "seedance2.0fast_vip", label: "Seedance 2.0 Fast VIP", short: "Fast VIP" },
-  { value: "seedance2.0fast", label: "Seedance 2.0 Fast", short: "Fast" },
-  { value: "seedance2.0", label: "Seedance 2.0", short: "2.0" },
-  { value: "seedance2.0_vip", label: "Seedance 2.0 VIP", short: "VIP" }
+  { value: "doubao-seedance-2-0-fast-260128", label: "Seedance 2.0 Fast", short: "Fast" },
+  { value: "doubao-seedance-2-0-260128", label: "Seedance 2.0", short: "2.0" }
 ];
+const defaultModelVersion: VideoModelVersion = "doubao-seedance-2-0-fast-260128";
 
 const ratioOptions: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 const durationOptions = Array.from({ length: 12 }, (_, index) => index + 4);
@@ -176,7 +175,7 @@ function App() {
   const [state, setState] = useState<AppState>(emptyState);
   const [mode, setMode] = useState<VideoMode>("frames");
   const [referenceTransport, setReferenceTransport] = useState<ReferenceTransport>("url");
-  const [modelVersion, setModelVersion] = useState<VideoModelVersion>("seedance2.0fast_vip");
+  const [modelVersion, setModelVersion] = useState<VideoModelVersion>(defaultModelVersion);
   const [ratio, setRatio] = useState<VideoRatio>("16:9");
   const [duration, setDuration] = useState(5);
   const [prompt, setPrompt] = useState("");
@@ -271,7 +270,7 @@ function App() {
   function restoreTask(task: VideoTask) {
     setMode((task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal");
     setReferenceTransport(task.referenceTransport ?? "url");
-    setModelVersion(task.modelVersion ?? "seedance2.0fast_vip");
+    setModelVersion(normalizeModelVersion(task.modelVersion));
     setRatio(task.ratio ?? "16:9");
     setDuration(task.duration ?? 5);
     setPrompt(task.prompt);
@@ -284,7 +283,7 @@ function App() {
       mode: (task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal",
       referenceTransport: task.referenceTransport ?? "url",
       prompt: task.prompt,
-      modelVersion: task.modelVersion ?? "seedance2.0fast_vip",
+      modelVersion: normalizeModelVersion(task.modelVersion),
       ratio: task.ratio ?? "16:9",
       duration: task.duration ?? 5,
       references: task.references ?? []
@@ -1043,6 +1042,10 @@ function UsageList({ title, rows }: { title: string; rows: string[][] }) {
 
 function modelLabel(value: string) {
   return modelOptions.find((item) => item.value === value)?.label ?? value;
+}
+
+function normalizeModelVersion(value?: string): VideoModelVersion {
+  return modelOptions.find((item) => item.value === value)?.value ?? defaultModelVersion;
 }
 
 function formatDate(value: string) {

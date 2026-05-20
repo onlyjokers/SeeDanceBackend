@@ -22,10 +22,7 @@ export class VideoClient {
   async createTask(input: VideoTaskInput) {
     const settings = await this.settings();
     if (!settings.arkAPIKey) throw new Error("缺少 ARK_API_KEY，无法创建视频任务。");
-    const payload = {
-      ...buildVideoTaskPayload(input),
-      model: settings.arkVideoModel
-    };
+    const payload = buildVideoTaskPayload(input);
     const raw = await this.call(settings, "/api/v3/contents/generations/tasks", "POST", payload);
     const remoteTaskId = findFirstString(raw, ["id", "task_id", "taskId"]);
     if (!remoteTaskId) throw new Error("视频任务响应里没有 task id。");

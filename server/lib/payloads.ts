@@ -1,15 +1,13 @@
 export type AssetType = "Image" | "Video" | "Audio";
 export type VideoMode = "text" | "multimodal" | "frames";
 export type ReferenceTransport = "asset" | "url";
-export type VideoModelVersion = "seedance2.0fast_vip" | "seedance2.0fast" | "seedance2.0" | "seedance2.0_vip";
+export type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";
 export type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
 export type VideoReferenceRole = "reference" | "first_frame" | "last_frame";
 
 export const videoModelVersions: VideoModelVersion[] = [
-  "seedance2.0fast_vip",
-  "seedance2.0fast",
-  "seedance2.0",
-  "seedance2.0_vip"
+  "doubao-seedance-2-0-fast-260128",
+  "doubao-seedance-2-0-260128"
 ];
 
 export const videoRatios: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];

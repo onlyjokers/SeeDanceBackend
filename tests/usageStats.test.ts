@@ -20,7 +20,7 @@ describe("usage stats", () => {
           prompt: "a",
           assetIds: [],
           mode: "multimodal",
-          modelVersion: "seedance2.0fast_vip",
+          modelVersion: "doubao-seedance-2-0-fast-260128",
           ratio: "16:9",
           duration: 5,
           references: [
@@ -38,7 +38,7 @@ describe("usage stats", () => {
           prompt: "b",
           assetIds: [],
           mode: "frames",
-          modelVersion: "seedance2.0",
+          modelVersion: "doubao-seedance-2-0-260128",
           status: "failed",
           hiddenAt: "2026-05-18T09:00:00.000Z",
           createdAt: "2026-05-18T09:00:00.000Z",
@@ -50,7 +50,7 @@ describe("usage stats", () => {
           prompt: "c",
           assetIds: [],
           mode: "multimodal",
-          modelVersion: "seedance2.0fast_vip",
+          modelVersion: "doubao-seedance-2-0-fast-260128",
           status: "running",
           createdAt: "2026-05-19T01:00:00.000Z",
           updatedAt: "2026-05-19T01:00:00.000Z"
@@ -67,7 +67,7 @@ describe("usage stats", () => {
     expect(summary.totals.downloaded).toBe(1);
     expect(summary.byStatus).toEqual({ queued: 0, running: 1, succeeded: 1, failed: 1 });
     expect(summary.byProject[0]).toMatchObject({ projectId: "p1", projectName: "广告", requests: 2 });
-    expect(summary.byModel[0]).toMatchObject({ modelVersion: "seedance2.0fast_vip", requests: 2 });
+    expect(summary.byModel[0]).toMatchObject({ modelVersion: "doubao-seedance-2-0-fast-260128", requests: 2 });
     expect(summary.byDay).toEqual([
       { day: "2026-05-18", requests: 2 },
       { day: "2026-05-19", requests: 1 }

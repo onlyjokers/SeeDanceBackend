@@ -55,7 +55,7 @@ describe("Assets API payloads", () => {
 describe("video task payloads", () => {
   it("uses asset:// references without injecting asset ids into prompt text", () => {
     const payload = buildVideoTaskPayload({
-      modelVersion: "seedance2.0fast_vip",
+      modelVersion: "doubao-seedance-2-0-fast-260128",
       prompt: "让图片 1 的人物转身看向镜头",
       mode: "multimodal",
       ratio: "16:9",
@@ -63,7 +63,7 @@ describe("video task payloads", () => {
       references: [{ assetId: "Asset-2026abc", assetType: "Image", role: "reference", label: "图片 1" }]
     });
 
-    expect(payload.model).toBe("seedance2.0fast_vip");
+    expect(payload.model).toBe("doubao-seedance-2-0-fast-260128");
     expect(payload.ratio).toBe("16:9");
     expect(payload.duration).toBe(5);
     expect(payload.video_resolution).toBe("720p");
@@ -77,7 +77,7 @@ describe("video task payloads", () => {
 
   it("supports text-only video payloads", () => {
     const payload = buildVideoTaskPayload({
-      modelVersion: "seedance2.0fast",
+      modelVersion: "doubao-seedance-2-0-fast-260128",
       prompt: "一只玻璃杯在日光下缓慢旋转，背景干净",
       mode: "text",
       ratio: "1:1",
@@ -86,7 +86,7 @@ describe("video task payloads", () => {
     });
 
     expect(payload).toEqual({
-      model: "seedance2.0fast",
+      model: "doubao-seedance-2-0-fast-260128",
       duration: 8,
       ratio: "1:1",
       video_resolution: "720p",
@@ -101,7 +101,7 @@ describe("video task payloads", () => {
 
   it("supports direct HTTPS image references for advanced mode", () => {
     const payload = buildVideoTaskPayload({
-      modelVersion: "seedance2.0",
+      modelVersion: "doubao-seedance-2-0-260128",
       prompt: "参考图片 1 的构图",
       mode: "multimodal",
       ratio: "21:9",
@@ -119,7 +119,7 @@ describe("video task payloads", () => {
 
   it("marks first and last frame references in frames mode", () => {
     const payload = buildVideoTaskPayload({
-      modelVersion: "seedance2.0fast",
+      modelVersion: "doubao-seedance-2-0-fast-260128",
       prompt: "从首帧自然过渡到尾帧",
       mode: "frames",
       ratio: "16:9",

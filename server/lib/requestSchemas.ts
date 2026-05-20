@@ -6,7 +6,7 @@ export const videoTaskRequestSchema = z.object({
   mode: z.enum(["text", "multimodal", "frames"]).default("multimodal"),
   referenceTransport: z.enum(["asset", "url"]).default("url"),
   prompt: z.string().min(1),
-  modelVersion: z.enum(videoModelVersions).default("seedance2.0fast_vip"),
+  modelVersion: z.enum(videoModelVersions).default("doubao-seedance-2-0-fast-260128"),
   ratio: z.enum(videoRatios).default("16:9"),
   duration: z.number().int().min(4).max(15).default(5),
   references: z.array(z.object({

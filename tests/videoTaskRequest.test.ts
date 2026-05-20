@@ -11,7 +11,7 @@ describe("video task request schema", () => {
       mode: "text",
       prompt: "城市街道延时摄影",
       referenceTransport: "url",
-      modelVersion: "seedance2.0fast_vip",
+      modelVersion: "doubao-seedance-2-0-fast-260128",
       ratio: "16:9",
       duration: 5,
       references: []
@@ -23,7 +23,7 @@ describe("video task request schema", () => {
       mode: "multimodal",
       referenceTransport: "url",
       prompt: "图片 1 的人物转身",
-      modelVersion: "seedance2.0",
+      modelVersion: "doubao-seedance-2-0-260128",
       ratio: "9:16",
       duration: 12,
       references: [
@@ -82,7 +82,7 @@ describe("video task request schema", () => {
     expect(() => parseVideoTaskRequest({
       mode: "text",
       prompt: "城市",
-      modelVersion: "seedance1.0",
+      modelVersion: "seedance2.0fast_vip",
       ratio: "2:1",
       duration: 16,
       references: []
