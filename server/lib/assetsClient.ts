@@ -3,9 +3,12 @@ import { buildCreateAssetGroupPayload, buildCreateAssetPayload, type AssetType }
 import { signVolcengineRequest } from "./volcengineSigner.js";
 import type { Asset, AssetGroup } from "../types.js";
 
-const serviceName = "ark";
 const apiVersion = "2024-01-01";
 const endpoint = "https://open.volcengineapi.com";
+const withProjectName = (payload: Record<string, unknown>, projectName?: string) => {
+  if (projectName) payload.ProjectName = projectName;
+  return payload;
+};
 
 export class AssetsClient {
   constructor(private readonly config: AppConfig) {}
@@ -24,7 +27,7 @@ export class AssetsClient {
       name: input.name,
       description: input.description ?? "",
       groupType: "AIGC",
-      projectName: input.projectName || "default",
+      projectName: responseProjectName(raw, input.projectName),
       createTime: stringAt(raw, ["Result", "CreateTime"]),
       updateTime: stringAt(raw, ["Result", "UpdateTime"]),
       raw
@@ -43,14 +46,14 @@ export class AssetsClient {
       assetType: input.assetType,
       groupId: input.groupId,
       status: "Processing",
-      projectName: input.projectName || "default",
+      projectName: responseProjectName(raw, input.projectName),
       raw
     };
     return asset;
   }
 
-  async getAsset(id: string, projectName = "default") {
-    const raw = await this.call("GetAsset", { Id: id, ProjectName: projectName });
+  async getAsset(id: string, projectName?: string) {
+    const raw = await this.call("GetAsset", withProjectName({ Id: id }, projectName));
     const result = objectAt(raw, ["Result"]) ?? raw;
     const asset: Asset = {
       id: stringAt(result, ["Id"]) || id,
@@ -61,7 +64,7 @@ export class AssetsClient {
       status: stringAt(result, ["Status"]) || "Processing",
       errorCode: stringAt(result, ["Error", "Code"]),
       errorMessage: stringAt(result, ["Error", "Message"]),
-      projectName: stringAt(result, ["ProjectName"]) || projectName,
+      projectName: stringAt(result, ["ProjectName"]) || projectName || "",
       createTime: stringAt(result, ["CreateTime"]),
       updateTime: stringAt(result, ["UpdateTime"]),
       raw
@@ -69,48 +72,44 @@ export class AssetsClient {
     return asset;
   }
 
-  async listAssetGroups(projectName = "default") {
-    return this.call("ListAssetGroups", {
+  async listAssetGroups(projectName?: string) {
+    return this.call("ListAssetGroups", withProjectName({
       Filter: { GroupType: "AIGC" },
       PageNumber: 1,
       PageSize: 100,
       SortBy: "CreateTime",
-      SortOrder: "Desc",
-      ProjectName: projectName
-    });
+      SortOrder: "Desc"
+    }, projectName));
   }
 
-  async listAssets(groupIds: string[] = [], projectName = "default") {
-    return this.call("ListAssets", {
+  async listAssets(groupIds: string[] = [], projectName?: string) {
+    return this.call("ListAssets", withProjectName({
       Filter: { GroupType: "AIGC", ...(groupIds.length ? { GroupIds: groupIds } : {}) },
       PageNumber: 1,
       PageSize: 100,
       SortBy: "CreateTime",
-      SortOrder: "Desc",
-      ProjectName: projectName
-    });
+      SortOrder: "Desc"
+    }, projectName));
   }
 
   async updateAssetGroup(input: { id: string; name: string; description?: string; projectName?: string }) {
-    const raw = await this.call("UpdateAssetGroup", {
+    const raw = await this.call("UpdateAssetGroup", withProjectName({
       Id: input.id,
       Name: input.name,
-      Description: input.description ?? "",
-      ProjectName: input.projectName || "default"
-    });
+      Description: input.description ?? ""
+    }, input.projectName));
     return raw;
   }
 
   async updateAsset(input: { id: string; name: string; projectName?: string }) {
-    return this.call("UpdateAsset", {
+    return this.call("UpdateAsset", withProjectName({
       Id: input.id,
-      Name: input.name,
-      ProjectName: input.projectName || "default"
-    });
+      Name: input.name
+    }, input.projectName));
   }
 
-  async deleteAsset(id: string, projectName = "default") {
-    return this.call("DeleteAsset", { Id: id, ProjectName: projectName });
+  async deleteAsset(id: string, projectName?: string) {
+    return this.call("DeleteAsset", withProjectName({ Id: id }, projectName));
   }
 
   private async call(action: string, payload: unknown) {
@@ -128,7 +127,7 @@ export class AssetsClient {
       query,
       body,
       region: this.config.volcengineRegion,
-      service: serviceName,
+      service: this.config.volcengineService,
       accessKey: this.config.volcengineAK,
       secretKey: this.config.volcengineSK
     });
@@ -169,4 +168,10 @@ function stringAt(source: unknown, path: string[]) {
   if (typeof value === "string") return value;
   if (value == null) return "";
   return String(value);
+}
+
+function responseProjectName(raw: unknown, requested?: string) {
+  if (requested) return requested;
+  const projectName = stringAt(raw, ["Result", "ProjectName"]);
+  return projectName === "default" ? "" : projectName;
 }

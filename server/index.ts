@@ -86,7 +86,7 @@ app.post("/api/asset-groups", asyncHandler(async (req, res) => {
   const input = z.object({
     name: z.string().min(1).max(64),
     description: z.string().max(300).optional(),
-    projectName: z.string().optional().default("default")
+    projectName: z.string().optional()
   }).parse(req.body);
   const group = await assetsClient.createAssetGroup(input);
   await upsertAssetGroup(db, group);
@@ -98,7 +98,7 @@ app.post("/api/asset-groups/:id/update", asyncHandler(async (req, res) => {
   const input = z.object({
     name: z.string().min(1).max(64),
     description: z.string().max(300).optional(),
-    projectName: z.string().optional().default("default")
+    projectName: z.string().optional()
   }).parse(req.body);
   const raw = await assetsClient.updateAssetGroup({ id, ...input });
   const existing = db.data.assetGroups.find((group) => group.id === id);
@@ -112,7 +112,7 @@ app.post("/api/assets", asyncHandler(async (req, res) => {
     url: z.string().min(1),
     name: z.string().max(64).optional(),
     assetType: z.enum(["Image", "Video", "Audio"]),
-    projectName: z.string().optional().default("default")
+    projectName: z.string().optional()
   }).parse(req.body);
   const validation = validatePublicAssetUrl(input.url);
   if (!validation.ok) return res.status(400).json({ error: validation.message });
@@ -132,7 +132,7 @@ app.post("/api/uploads/image", asyncHandler(async (req, res) => {
 
 app.post("/api/assets/:id/poll", asyncHandler(async (req, res) => {
   const id = routeParam(req.params.id);
-  const projectName = typeof req.body?.projectName === "string" ? req.body.projectName : "default";
+  const projectName = typeof req.body?.projectName === "string" ? req.body.projectName : undefined;
   const asset = await assetsClient.getAsset(id, projectName);
   await upsertAsset(db, asset);
   res.json(asset);
@@ -142,7 +142,7 @@ app.post("/api/assets/:id/update", asyncHandler(async (req, res) => {
   const id = routeParam(req.params.id);
   const input = z.object({
     name: z.string().min(1).max(64),
-    projectName: z.string().optional().default("default")
+    projectName: z.string().optional()
   }).parse(req.body);
   const raw = await assetsClient.updateAsset({ id, ...input });
   const existing = db.data.assets.find((asset) => asset.id === id);
@@ -152,14 +152,14 @@ app.post("/api/assets/:id/update", asyncHandler(async (req, res) => {
 
 app.delete("/api/assets/:id", asyncHandler(async (req, res) => {
   const id = routeParam(req.params.id);
-  const projectName = typeof req.query.projectName === "string" ? req.query.projectName : "default";
+  const projectName = typeof req.query.projectName === "string" ? req.query.projectName : undefined;
   const raw = await assetsClient.deleteAsset(id, projectName);
   await deleteAsset(db, id);
   res.json({ ok: true, raw });
 }));
 
 app.post("/api/sync/assets", asyncHandler(async (req, res) => {
-  const projectName = typeof req.body?.projectName === "string" ? req.body.projectName : "default";
+  const projectName = typeof req.body?.projectName === "string" ? req.body.projectName : undefined;
   const groupIds = Array.isArray(req.body?.groupIds) ? req.body.groupIds.filter((value: unknown) => typeof value === "string") : [];
   const rawGroups = await assetsClient.listAssetGroups(projectName);
   const rawAssets = await assetsClient.listAssets(groupIds, projectName);
@@ -291,12 +291,13 @@ async function prepareAssetReferences(references: VideoReferenceInput[]) {
 }
 
 async function ensureDefaultAssetGroup() {
-  const existing = db.data.assetGroups[0];
+  const expectedProjectName = config.assetProjectName || "";
+  const existing = db.data.assetGroups.find((group) => group.projectName === expectedProjectName);
   if (existing) return existing;
   const group = await assetsClient.createAssetGroup({
     name: "seendance-reference-assets",
     description: "SeeDance UI uploaded reference assets",
-    projectName: "default"
+    projectName: config.assetProjectName || undefined
   });
   await upsertAssetGroup(db, group);
   return group;

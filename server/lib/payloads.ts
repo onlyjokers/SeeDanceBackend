@@ -70,22 +70,24 @@ interface VideoTaskPayload {
 }
 
 export function buildCreateAssetGroupPayload(input: CreateAssetGroupInput) {
-  return {
+  const payload: Record<string, unknown> = {
     Name: input.name,
     Description: input.description ?? "",
-    GroupType: "AIGC",
-    ProjectName: input.projectName || "default"
+    GroupType: "AIGC"
   };
+  if (input.projectName) payload.ProjectName = input.projectName;
+  return payload;
 }
 
 export function buildCreateAssetPayload(input: CreateAssetInput) {
-  return {
+  const payload: Record<string, unknown> = {
     GroupId: input.groupId,
     URL: input.url,
     Name: input.name ?? "",
-    AssetType: input.assetType,
-    ProjectName: input.projectName || "default"
+    AssetType: input.assetType
   };
+  if (input.projectName) payload.ProjectName = input.projectName;
+  return payload;
 }
 
 export function buildVideoTaskPayload(input: VideoTaskInput): VideoTaskPayload {

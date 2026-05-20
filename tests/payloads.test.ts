@@ -10,13 +10,11 @@ describe("Assets API payloads", () => {
   it("matches the docx CreateAssetGroup fields", () => {
     expect(buildCreateAssetGroupPayload({
       name: "portrait-set",
-      description: "reference assets",
-      projectName: "default"
+      description: "reference assets"
     })).toEqual({
       Name: "portrait-set",
       Description: "reference assets",
-      GroupType: "AIGC",
-      ProjectName: "default"
+      GroupType: "AIGC"
     });
   });
 
@@ -25,15 +23,26 @@ describe("Assets API payloads", () => {
       groupId: "group-1",
       url: "https://example.com/ref.png",
       name: "ref",
-      assetType: "Image",
-      projectName: "default"
+      assetType: "Image"
     })).toEqual({
       GroupId: "group-1",
       URL: "https://example.com/ref.png",
       Name: "ref",
-      AssetType: "Image",
-      ProjectName: "default"
+      AssetType: "Image"
     });
+  });
+
+  it("passes ProjectName only when explicitly configured", () => {
+    expect(buildCreateAssetGroupPayload({
+      name: "portrait-set",
+      projectName: "project-a"
+    })).toMatchObject({ ProjectName: "project-a" });
+    expect(buildCreateAssetPayload({
+      groupId: "group-1",
+      url: "https://example.com/ref.png",
+      assetType: "Image",
+      projectName: "project-a"
+    })).toMatchObject({ ProjectName: "project-a" });
   });
 
   it("rejects base64 and non-public asset URLs", () => {
