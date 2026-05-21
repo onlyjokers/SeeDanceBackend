@@ -16,6 +16,7 @@ export interface AppConfig {
   assetProjectName: string;
   pollIntervalMs: number;
   pollTimeoutMs: number;
+  uploadDir: string;
 }
 
 export function loadConfig(): AppConfig {
@@ -34,7 +35,8 @@ export function loadConfig(): AppConfig {
     imageHostURL: process.env.IMAGE_HOST_URL || "https://uguu.se/upload.php",
     assetProjectName: process.env.ASSET_PROJECT_NAME || "",
     pollIntervalMs: numberEnv("POLL_INTERVAL_SECONDS", 5) * 1000,
-    pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 900) * 1000
+    pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 900) * 1000,
+    uploadDir: process.env.UPLOAD_DIR || "data/uploads"
   };
 }
 
@@ -49,7 +51,8 @@ export function publicConfig(config: AppConfig) {
     volcengineRegion: config.volcengineRegion,
     volcengineService: config.volcengineService,
     pollIntervalSeconds: config.pollIntervalMs / 1000,
-    pollTimeoutSeconds: config.pollTimeoutMs / 1000
+    pollTimeoutSeconds: config.pollTimeoutMs / 1000,
+    uploadDir: config.uploadDir
   };
 }
 

@@ -87,7 +87,7 @@ button:disabled {
   width: min(820px, calc(100vw - 460px));
   min-height: calc(100vh - 290px);
   margin: 38px auto 0;
-  padding-bottom: calc(var(--composer-clearance) - 190px);
+  padding-bottom: var(--composer-clearance);
   display: flex;
   flex-direction: column-reverse;
   justify-content: flex-start;
@@ -95,7 +95,7 @@ button:disabled {
 }
 
 .dream-shell:has(.reference-strip.multimodal) {
-  --composer-clearance: 334px;
+  --composer-clearance: 390px;
 }
 
 .date-heading {
@@ -291,6 +291,28 @@ button:disabled {
   border-radius: 12px;
   background: #241918;
   color: #ffb8a8;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.toast span {
+  min-width: 0;
+  flex: 1;
+}
+
+.toast button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 184, 168, 0.28);
+  border-radius: 50%;
+  background: rgba(255, 184, 168, 0.08);
+  color: #ffd0c4;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .composer {
@@ -305,7 +327,7 @@ button:disabled {
 }
 
 .composer:has(.reference-strip.multimodal) {
-  min-height: 258px;
+  min-height: 310px;
 }
 
 .composer textarea {
@@ -323,7 +345,7 @@ button:disabled {
 }
 
 .composer:has(.reference-strip.multimodal) textarea {
-  inset: 128px 142px 64px 24px;
+  inset: 174px 142px 64px 24px;
   min-height: 54px;
 }
 
@@ -348,7 +370,7 @@ button:disabled {
   max-width: none;
   flex-wrap: wrap;
   align-items: flex-start;
-  max-height: 94px;
+  max-height: 142px;
   overflow-y: auto;
   padding-right: 6px;
 }
@@ -1001,16 +1023,58 @@ button:disabled {
   min-height: 52px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 9px;
   padding: 0 16px;
   border-bottom: 1px solid #252a34;
   font-size: 16px;
 }
 
+.manager-card h2 > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.usage-refresh {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid #303847;
+  border-radius: 8px;
+  background: #10131a;
+  color: #dfe6f2;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .settings-form {
   display: grid;
   gap: 14px;
   padding: 16px;
+}
+
+.settings-group {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-group h3 {
+  margin: 0;
+  color: #dfe5ef;
+  font-size: 13px;
+}
+
+.settings-group > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.setting-field {
+  min-width: 0;
 }
 
 .settings-card,
@@ -1029,11 +1093,27 @@ button:disabled {
   padding: 16px;
 }
 
-.usage-note,
+.usage-note {
+  margin: 0;
+  color: #9ca6b6;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .usage-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 9px;
+}
+
+.usage-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 120, 104, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 120, 104, 0.09);
+  color: #ffb3a9;
+  font-size: 12px;
 }
 
 .usage-metric {
@@ -1118,6 +1198,47 @@ button:disabled {
   font-weight: 700;
 }
 
+.manager-records {
+  display: grid;
+  gap: 14px;
+}
+
+.manager-record-tools {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 150px 150px;
+  gap: 10px;
+}
+
+.manager-record-tools label,
+.manager-record-tools select {
+  min-height: 38px;
+  border: 1px solid #252b36;
+  border-radius: 9px;
+  background: #151820;
+  color: #dfe5ef;
+}
+
+.manager-record-tools label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.manager-record-tools input,
+.manager-record-tools select {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.manager-record-tools select {
+  padding: 0 10px;
+}
+
 .manager-record-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -1197,6 +1318,10 @@ button:disabled {
   color: #8993a3;
 }
 
+.manager-record-empty.compact {
+  min-height: 180px;
+}
+
 .manager-record-empty h2,
 .manager-record-empty p {
   margin: 0;
@@ -1214,7 +1339,7 @@ button:disabled {
   }
 
   .dream-shell:has(.reference-strip.multimodal) {
-    --composer-clearance: 350px;
+    --composer-clearance: 410px;
   }
 
   .conversation-rail {
@@ -1323,6 +1448,11 @@ button:disabled {
   }
 
   .manager-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-group > div,
+  .manager-record-tools {
     grid-template-columns: 1fr;
   }
 }

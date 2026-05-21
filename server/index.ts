@@ -1,6 +1,6 @@
 import express from "express";
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { z } from "zod";
 import { loadConfig, publicConfig } from "./lib/config.js";
 import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createVideoTask, createVideoProject, ensureDefaultVideoProject, getRuntimeSettings, hardDeleteVideoTaskRecord, hideVideoTaskRecord, renameVideoProject, updateRuntimeSettings } from "./lib/db.js";
@@ -13,14 +13,19 @@ import { getDownloadPathForTask, openDownloadFolder } from "./lib/downloadFolder
 import { uploadImageToTemporaryHost } from "./lib/uploadProvider.js";
 import { mountStaticClient } from "./lib/staticRouter.js";
 import { summarizeLocalUsage } from "./lib/usageStats.js";
+import { emptyOfficialUsage, InferenceUsageClient } from "./lib/inferenceUsageClient.js";
+import { fileFromLocalUpload, resolveLocalUploadPath, saveUploadedImageLocally } from "./lib/localUploadStore.js";
+import type { RuntimeSettings } from "./types.js";
 
 const config = loadConfig();
 const db = await openDB(config.databasePath);
 await ensureDefaultVideoProject(db);
 await mkdir(config.downloadDir, { recursive: true });
+await mkdir(config.uploadDir, { recursive: true });
 
-const assetsClient = new AssetsClient(config);
+const assetsClient = new AssetsClient(config, () => getRuntimeSettings(db, config));
 const videoClient = new VideoClient(config, () => getRuntimeSettings(db, config));
+const inferenceUsageClient = new InferenceUsageClient();
 const runner = new SerialTaskRunner(db, videoClient, config);
 const app = express();
 const managerToken = "sts-manager-session";
@@ -34,7 +39,8 @@ app.get("/api/config", asyncHandler(async (_req, res) => {
     arkAPIKeyConfigured: Boolean(settings.arkAPIKey),
     arkVideoModel: settings.arkVideoModel,
     arkBaseURL: settings.arkBaseURL,
-    imageHostURL: settings.imageHostURL
+    imageHostURL: settings.imageHostURL,
+    assetsCredentialsConfigured: Boolean(settings.volcengineAK && settings.volcengineSK)
   });
 }));
 
@@ -56,6 +62,16 @@ app.patch("/api/runtime-settings", asyncHandler(async (req, res) => {
 app.get("/api/manager/usage/local", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
   res.json(summarizeLocalUsage(db.data));
+}));
+
+app.get("/api/manager/usage/official", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  try {
+    const settings = await getRuntimeSettings(db, config);
+    res.json(await inferenceUsageClient.getRecentUsage(settings, { days: 7 }));
+  } catch (error) {
+    res.json(emptyOfficialUsage(error instanceof Error ? error.message : String(error)));
+  }
 }));
 
 app.post("/api/manager/login", asyncHandler(async (req, res) => {
@@ -126,8 +142,16 @@ app.post("/api/uploads/image", asyncHandler(async (req, res) => {
   const file = await fileFromMultipartRequest(req);
   if (!file.type.startsWith("image/")) return res.status(400).json({ error: "只支持上传图片文件。" });
   const settings = await getRuntimeSettings(db, config);
+  const local = await saveUploadedImageLocally(file, settings.uploadDir || config.uploadDir);
   const uploaded = await uploadImageToTemporaryHost(file, settings.imageHostURL);
-  res.json(uploaded);
+  res.json({ ...uploaded, localPath: local.path, localUrl: local.url });
+}));
+
+app.get("/api/uploads/local/:name", asyncHandler(async (req, res) => {
+  const name = basename(routeParam(req.params.name));
+  const settings = await getRuntimeSettings(db, config);
+  const path = resolveLocalUploadPath(settings.uploadDir || config.uploadDir, name);
+  res.sendFile(path);
 }));
 
 app.post("/api/assets/:id/poll", asyncHandler(async (req, res) => {
@@ -170,9 +194,11 @@ app.post("/api/video-tasks", asyncHandler(async (req, res) => {
   const input = parseVideoTaskRequest(req.body);
   const task = await createVideoTask(db, input, input.references.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
   runner.enqueue(task.id, async () => {
+    const settings = await getRuntimeSettings(db, config);
+    const refreshedInputReferences = await refreshTemporaryReferences(input.references, settings);
     const references = input.referenceTransport === "asset"
-      ? await prepareAssetReferences(input.references)
-      : input.references;
+      ? await prepareAssetReferences(refreshedInputReferences, settings)
+      : refreshedInputReferences;
     return videoClient.createTask({
       modelVersion: input.modelVersion,
       prompt: input.prompt,
@@ -248,17 +274,29 @@ function routeParam(value: string | string[] | undefined) {
 }
 
 const runtimeSettingsSchema = z.object({
+  port: z.string().trim().min(1),
+  host: z.string().trim().min(1),
+  databasePath: z.string().trim().min(1),
+  downloadDir: z.string().trim().min(1),
+  uploadDir: z.string().trim().min(1),
+  volcengineAK: z.string().trim(),
+  volcengineSK: z.string().trim(),
+  volcengineRegion: z.string().trim().min(1),
+  volcengineService: z.string().trim().min(1),
   arkAPIKey: z.string().trim().min(1),
   arkVideoModel: z.string().trim().min(1),
   arkBaseURL: z.string().trim().url(),
-  imageHostURL: z.string().trim().url()
+  imageHostURL: z.string().trim().url(),
+  assetProjectName: z.string().trim(),
+  pollIntervalSeconds: z.string().trim().min(1),
+  pollTimeoutSeconds: z.string().trim().min(1)
 });
 
 function isManagerRequest(req: express.Request) {
   return req.headers["x-sts-manager-token"] === managerToken;
 }
 
-async function prepareAssetReferences(references: VideoReferenceInput[]) {
+async function prepareAssetReferences(references: VideoReferenceInput[], settings: RuntimeSettings) {
   const prepared: VideoReferenceInput[] = [];
   for (const [index, reference] of references.entries()) {
     if (reference.assetId) {
@@ -271,7 +309,7 @@ async function prepareAssetReferences(references: VideoReferenceInput[]) {
     if (!reference.sourceUrl) throw new Error("参考图片缺少公网 URL。");
     const validation = validatePublicAssetUrl(reference.sourceUrl);
     if (!validation.ok) throw new Error(validation.message);
-    const group = await ensureDefaultAssetGroup();
+    const group = await ensureDefaultAssetGroup(settings);
     const asset = await assetsClient.createAsset({
       groupId: group.id,
       url: reference.sourceUrl,
@@ -290,17 +328,35 @@ async function prepareAssetReferences(references: VideoReferenceInput[]) {
   return prepared;
 }
 
-async function ensureDefaultAssetGroup() {
-  const expectedProjectName = config.assetProjectName || "";
+async function ensureDefaultAssetGroup(settings: RuntimeSettings) {
+  const expectedProjectName = settings.assetProjectName || "";
   const existing = db.data.assetGroups.find((group) => group.projectName === expectedProjectName);
   if (existing) return existing;
   const group = await assetsClient.createAssetGroup({
     name: "seendance-reference-assets",
     description: "SeeDance UI uploaded reference assets",
-    projectName: config.assetProjectName || undefined
+    projectName: settings.assetProjectName || undefined
   });
   await upsertAssetGroup(db, group);
   return group;
+}
+
+async function refreshTemporaryReferences(references: VideoReferenceInput[], settings: RuntimeSettings) {
+  const refreshed: VideoReferenceInput[] = [];
+  for (const reference of references) {
+    if (!reference.localPath) {
+      refreshed.push(reference);
+      continue;
+    }
+    const file = await fileFromLocalUpload(reference.localPath, reference.label || "reference.png");
+    const uploaded = await uploadImageToTemporaryHost(file, settings.imageHostURL);
+    refreshed.push({
+      ...reference,
+      sourceUrl: uploaded.url,
+      previewUrl: reference.localUrl || reference.previewUrl || uploaded.url
+    });
+  }
+  return refreshed;
 }
 
 async function waitForAssetActive(id: string, projectName: string) {

@@ -13,6 +13,8 @@ export const videoTaskRequestSchema = z.object({
     role: z.enum(["reference", "first_frame", "last_frame"]),
     sourceUrl: z.string().url().optional(),
     previewUrl: z.string().url().optional(),
+    localPath: z.string().optional(),
+    localUrl: z.string().optional(),
     assetId: z.string().optional(),
     assetType: z.enum(["Image", "Video", "Audio"]).default("Image"),
     label: z.string().optional()

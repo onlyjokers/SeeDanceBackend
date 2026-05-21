@@ -15,6 +15,7 @@ const config: AppConfig = {
   host: "0.0.0.0",
   databasePath: "data/test.json",
   downloadDir: "data/downloads",
+  uploadDir: "data/uploads",
   volcengineAK: "ak",
   volcengineSK: "sk",
   volcengineRegion: "cn-beijing",

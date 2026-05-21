@@ -64,10 +64,22 @@ export interface PollLog {
 }
 
 export interface RuntimeSettings {
+  port: string;
+  host: string;
+  databasePath: string;
+  downloadDir: string;
+  uploadDir: string;
+  volcengineAK: string;
+  volcengineSK: string;
+  volcengineRegion: string;
+  volcengineService: string;
   arkAPIKey: string;
   arkVideoModel: string;
   arkBaseURL: string;
   imageHostURL: string;
+  assetProjectName: string;
+  pollIntervalSeconds: string;
+  pollTimeoutSeconds: string;
 }
 
 export interface DatabaseShape {

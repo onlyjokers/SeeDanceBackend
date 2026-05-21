@@ -44,15 +44,30 @@ interface PublicConfig {
   arkBaseURL: string;
   imageHostURL: string;
   volcengineRegion: string;
+  volcengineService: string;
+  assetProjectNameConfigured: boolean;
   pollIntervalSeconds: number;
   pollTimeoutSeconds: number;
+  uploadDir: string;
 }
 
 interface RuntimeSettings {
+  port: string;
+  host: string;
+  databasePath: string;
+  downloadDir: string;
+  uploadDir: string;
+  volcengineAK: string;
+  volcengineSK: string;
+  volcengineRegion: string;
+  volcengineService: string;
   arkAPIKey: string;
   arkVideoModel: string;
   arkBaseURL: string;
   imageHostURL: string;
+  assetProjectName: string;
+  pollIntervalSeconds: string;
+  pollTimeoutSeconds: string;
 }
 
 interface AssetGroup {
@@ -78,6 +93,8 @@ interface VideoReference {
   assetId?: string;
   sourceUrl?: string;
   previewUrl?: string;
+  localPath?: string;
+  localUrl?: string;
   assetType: AssetType;
   role: ReferenceRole;
   label?: string;
@@ -136,6 +153,20 @@ interface LocalUsageSummary {
   byDay: Array<{ day: string; requests: number }>;
 }
 
+interface OfficialUsageSummary {
+  source: "official";
+  totals: {
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    imageCount: number;
+  };
+  rows: Array<Record<string, string | number>>;
+  dataCount: number;
+  error?: string;
+}
+
 interface VideoProject {
   id: string;
   name: string;
@@ -149,6 +180,9 @@ interface ReferenceSlot {
   label: string;
   token?: string;
   url?: string;
+  remoteUrl?: string;
+  localPath?: string;
+  localUrl?: string;
   uploading?: boolean;
   error?: string;
 }
@@ -258,8 +292,10 @@ function App() {
         .filter((slot) => slot.url)
         .map((slot) => ({
           role: slot.role,
-          sourceUrl: slot.url,
-          previewUrl: slot.url,
+          sourceUrl: slot.remoteUrl || slot.url,
+          previewUrl: slot.localUrl || slot.url,
+          localPath: slot.localPath,
+          localUrl: slot.localUrl,
           assetType: "Image" as const,
           label: slot.label
         })),
@@ -356,7 +392,14 @@ function App() {
       const response = await fetch("/api/uploads/image", { method: "POST", body });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "上传图片失败");
-      setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: result.url, uploading: false } : slot));
+      setSlots((items) => items.map((slot) => slot.id === slotId ? {
+        ...slot,
+        url: result.localUrl || result.url,
+        remoteUrl: result.url,
+        localPath: result.localPath,
+        localUrl: result.localUrl,
+        uploading: false
+      } : slot));
     } catch (error) {
       setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, uploading: false, error: error instanceof Error ? error.message : String(error) } : slot));
     }
@@ -368,8 +411,8 @@ function App() {
       const last = items.find((slot) => slot.role === "last_frame");
       if (!first || !last) return items;
       return items.map((slot) => {
-        if (slot.role === "first_frame") return { ...slot, url: last.url, error: last.error };
-        if (slot.role === "last_frame") return { ...slot, url: first.url, error: first.error };
+        if (slot.role === "first_frame") return { ...slot, url: last.url, remoteUrl: last.remoteUrl, localPath: last.localPath, localUrl: last.localUrl, error: last.error };
+        if (slot.role === "last_frame") return { ...slot, url: first.url, remoteUrl: first.remoteUrl, localPath: first.localPath, localUrl: first.localUrl, error: first.error };
         return slot;
       });
     });
@@ -440,9 +483,9 @@ function App() {
       )}
 
       {view === "generate" && <section className="composer-wrap">
-        {toast && <div className="toast">{toast}</div>}
+        {toast && <div className="toast"><span>{toast}</span><button onClick={() => setToast("")} title="关闭提示">×</button></div>}
         <div className="composer">
-          <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, error: "" } : slot))} onInsertReference={insertReference} />
+          <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, remoteUrl: undefined, localPath: undefined, localUrl: undefined, error: "" } : slot))} onInsertReference={insertReference} />
           <textarea
             ref={promptRef}
             value={prompt}
@@ -618,9 +661,14 @@ function slotsFromTask(task: VideoTask): ReferenceSlot[] {
   const mode = task.mode === "frames" ? "frames" : "multimodal";
   const base = initialSlots(mode);
   for (const reference of task.references ?? []) {
-    const url = reference.previewUrl || reference.sourceUrl;
+    const url = reference.localUrl || reference.previewUrl || reference.sourceUrl;
     const target = base.find((slot) => slot.role === reference.role && !slot.url) ?? base.find((slot) => slot.role === reference.role);
-    if (target) target.url = url;
+    if (target) {
+      target.url = url;
+      target.remoteUrl = reference.sourceUrl;
+      target.localPath = reference.localPath;
+      target.localUrl = reference.localUrl;
+    }
   }
   return base;
 }
@@ -771,9 +819,9 @@ function taskStatusLabel(task: VideoTask, latestLog?: PollLog) {
 }
 
 function ReferenceThumbs({ references }: { references: VideoReference[] }) {
-  const visible = references.filter((reference) => reference.previewUrl || reference.sourceUrl).slice(0, 9);
+  const visible = references.filter((reference) => reference.localUrl || reference.previewUrl || reference.sourceUrl).slice(0, 9);
   if (!visible.length) return null;
-  return <div className="reference-thumbs">{visible.slice(0, 4).map((reference, index) => <img key={`${reference.previewUrl}-${index}`} src={reference.previewUrl || reference.sourceUrl} alt={reference.label || `参考 ${index + 1}`} />)}{visible.length > 4 && <span>+{visible.length - 4}</span>}</div>;
+  return <div className="reference-thumbs">{visible.slice(0, 4).map((reference, index) => <img key={`${reference.localUrl || reference.previewUrl || reference.sourceUrl}-${index}`} src={reference.localUrl || reference.previewUrl || reference.sourceUrl} alt={reference.label || `参考 ${index + 1}`} />)}{visible.length > 4 && <span>+{visible.length - 4}</span>}</div>;
 }
 
 function TaskPlaceholder({ status }: { status: VideoTask["status"] }) {
@@ -788,6 +836,7 @@ function ManagerApp() {
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
   const [localUsage, setLocalUsage] = useState<LocalUsageSummary | null>(null);
+  const [officialUsage, setOfficialUsage] = useState<OfficialUsageSummary | null>(null);
   const [managerView, setManagerView] = useState<"dashboard" | "records">("dashboard");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -803,9 +852,31 @@ function ManagerApp() {
     setLocalUsage(await localUsageResponse.json());
   }
 
+  async function refreshOfficialUsage() {
+    setBusy("official-usage");
+    setMessage("");
+    try {
+      const response = await fetch("/api/manager/usage/official", { headers: { "x-sts-manager-token": managerToken } });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "刷新官方用量失败");
+      setOfficialUsage(result);
+    } catch (error) {
+      setOfficialUsage({
+        source: "official",
+        totals: { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, imageCount: 0 },
+        rows: [],
+        dataCount: 0,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setBusy("");
+    }
+  }
+
   useEffect(() => {
     if (!authenticated) return;
     void refreshManager();
+    void refreshOfficialUsage();
     const timer = window.setInterval(refreshManager, 3000);
     return () => window.clearInterval(timer);
   }, [authenticated]);
@@ -938,19 +1009,42 @@ function ManagerApp() {
         {message && <div className={`manager-message ${message.includes("失败") || message.includes("错误") ? "error" : ""}`}>{message}</div>}
         {managerView === "dashboard" ? <section className="manager-grid">
           <section className="manager-card settings-card">
-            <h2><Settings2 size={19} />运行时参数</h2>
+            <h2><span><Settings2 size={19} />运行时参数</span></h2>
             {settings && (
               <div className="settings-form">
-                <SettingField label="EP" value={settings.arkVideoModel} onChange={(value) => setSettings({ ...settings, arkVideoModel: value })} />
-                <SettingField label="APIKey" value={settings.arkAPIKey} onChange={(value) => setSettings({ ...settings, arkAPIKey: value })} />
-                <SettingField label="请求地址" value={settings.arkBaseURL} onChange={(value) => setSettings({ ...settings, arkBaseURL: value })} />
-                <SettingField label="图床地址" value={settings.imageHostURL} onChange={(value) => setSettings({ ...settings, imageHostURL: value })} />
+                <SettingsGroup title="服务路径">
+                  <SettingField label="PORT" value={settings.port} onChange={(value) => setSettings({ ...settings, port: value })} />
+                  <SettingField label="HOST" value={settings.host} onChange={(value) => setSettings({ ...settings, host: value })} />
+                  <SettingField label="DATABASE_PATH" value={settings.databasePath} onChange={(value) => setSettings({ ...settings, databasePath: value })} />
+                  <SettingField label="DOWNLOAD_DIR" value={settings.downloadDir} onChange={(value) => setSettings({ ...settings, downloadDir: value })} />
+                  <SettingField label="UPLOAD_DIR" value={settings.uploadDir} onChange={(value) => setSettings({ ...settings, uploadDir: value })} />
+                </SettingsGroup>
+                <SettingsGroup title="火山引擎">
+                  <SettingField label="VOLCENGINE_AK" value={settings.volcengineAK} onChange={(value) => setSettings({ ...settings, volcengineAK: value })} />
+                  <SettingField label="VOLCENGINE_SK" value={settings.volcengineSK} onChange={(value) => setSettings({ ...settings, volcengineSK: value })} />
+                  <SettingField label="VOLCENGINE_REGION" value={settings.volcengineRegion} onChange={(value) => setSettings({ ...settings, volcengineRegion: value })} />
+                  <SettingField label="VOLCENGINE_SERVICE" value={settings.volcengineService} onChange={(value) => setSettings({ ...settings, volcengineService: value })} />
+                  <SettingField label="ASSET_PROJECT_NAME" value={settings.assetProjectName} onChange={(value) => setSettings({ ...settings, assetProjectName: value })} />
+                </SettingsGroup>
+                <SettingsGroup title="方舟生成">
+                  <SettingField label="ARK_VIDEO_MODEL / EP" value={settings.arkVideoModel} onChange={(value) => setSettings({ ...settings, arkVideoModel: value })} />
+                  <SettingField label="ARK_API_KEY" value={settings.arkAPIKey} onChange={(value) => setSettings({ ...settings, arkAPIKey: value })} />
+                  <SettingField label="ARK_BASE_URL" value={settings.arkBaseURL} onChange={(value) => setSettings({ ...settings, arkBaseURL: value })} />
+                  <SettingField label="IMAGE_HOST_URL" value={settings.imageHostURL} onChange={(value) => setSettings({ ...settings, imageHostURL: value })} />
+                  <SettingField label="POLL_INTERVAL_SECONDS" value={settings.pollIntervalSeconds} onChange={(value) => setSettings({ ...settings, pollIntervalSeconds: value })} />
+                  <SettingField label="POLL_TIMEOUT_SECONDS" value={settings.pollTimeoutSeconds} onChange={(value) => setSettings({ ...settings, pollTimeoutSeconds: value })} />
+                </SettingsGroup>
               </div>
             )}
           </section>
           <section className="manager-card usage-card">
-            <h2><BarChart3 size={19} />请求量统计</h2>
-            <LocalUsagePanel usage={localUsage} />
+            <h2>
+              <span><BarChart3 size={19} />请求量统计</span>
+              <button className="usage-refresh" onClick={refreshOfficialUsage} disabled={busy === "official-usage"}>
+                {busy === "official-usage" ? <Loader2 className="spin" size={15} /> : <RefreshCcw size={15} />}刷新官方
+              </button>
+            </h2>
+            <UsagePanel localUsage={localUsage} officialUsage={officialUsage} officialLoading={busy === "official-usage"} />
           </section>
         </section> : (
           <ManagerRecords tasks={state.videoTasks} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} />
@@ -969,33 +1063,90 @@ function SettingField({ label, value, onChange }: { label: string; value: string
   );
 }
 
-function LocalUsagePanel({ usage }: { usage: LocalUsageSummary | null }) {
-  if (!usage) return <div className="record-empty">正在读取本地统计</div>;
+function SettingsGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="settings-group">
+      <h3>{title}</h3>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+function UsagePanel({ localUsage, officialUsage, officialLoading }: { localUsage: LocalUsageSummary | null; officialUsage: OfficialUsageSummary | null; officialLoading: boolean }) {
+  if (!localUsage) return <div className="record-empty">正在读取本地统计</div>;
   return (
     <div className="usage-panel">
-      <p className="usage-note">这里统计的是本系统实际提交的任务，不需要额外的火山 AK/SK。</p>
+      <p className="usage-note">本地统计记录本系统提交次数；官方统计来自火山 GetInferenceUsage，取最近 7 天可返回的请求、Token 和图片量。</p>
       <div className="usage-metrics">
-        <UsageMetric label="总请求" value={usage.totals.requests} />
-        <UsageMetric label="成功" value={usage.byStatus.succeeded} />
-        <UsageMetric label="失败" value={usage.byStatus.failed} />
-        <UsageMetric label="已下载" value={usage.totals.downloaded} />
-        <UsageMetric label="隐藏记录" value={usage.totals.hidden} />
-        <UsageMetric label="参考图" value={usage.totals.referenceImages} />
+        <UsageMetric label="本地总请求" value={localUsage.totals.requests} />
+        <UsageMetric label="本地成功" value={localUsage.byStatus.succeeded} />
+        <UsageMetric label="本地失败" value={localUsage.byStatus.failed} />
+        <UsageMetric label="官方请求" value={officialUsage?.totals.requests ?? 0} />
+        <UsageMetric label="官方 Token" value={officialUsage?.totals.totalTokens ?? 0} />
+        <UsageMetric label="官方图片量" value={officialUsage?.totals.imageCount ?? 0} />
       </div>
+      {officialLoading && <p className="usage-note">正在刷新官方用量...</p>}
+      {officialUsage?.error && <p className="usage-error">{officialUsage.error}</p>}
       <div className="usage-lists">
-        <UsageList title="项目请求" rows={usage.byProject.slice(0, 5).map((item) => [item.projectName, `${item.requests} 次 / 成功 ${item.succeeded}`])} />
-        <UsageList title="模型请求" rows={usage.byModel.slice(0, 5).map((item) => [modelLabel(item.modelVersion), `${item.requests} 次`])} />
-        <UsageList title="最近日期" rows={usage.byDay.slice(-5).reverse().map((item) => [item.day, `${item.requests} 次`])} />
+        <UsageList title="项目请求" rows={localUsage.byProject.slice(0, 5).map((item) => [item.projectName, `${item.requests} 次 / 成功 ${item.succeeded}`])} />
+        <UsageList title="模型请求" rows={localUsage.byModel.slice(0, 5).map((item) => [modelLabel(item.modelVersion), `${item.requests} 次`])} />
+        <UsageList title="最近日期" rows={localUsage.byDay.slice(-5).reverse().map((item) => [item.day, `${item.requests} 次`])} />
       </div>
     </div>
   );
 }
 
 function ManagerRecords({ tasks, projects, busy, onHardDelete }: { tasks: VideoTask[]; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"all" | VideoTask["status"] | "hidden">("all");
+  const [sort, setSort] = useState<"newest" | "oldest" | "status" | "project">("newest");
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return tasks
+      .filter((task) => {
+        if (status === "hidden" && !task.hiddenAt) return false;
+        if (status !== "all" && status !== "hidden" && task.status !== status) return false;
+        if (!normalized) return true;
+        const haystack = [
+          task.id,
+          task.remoteTaskId,
+          task.prompt,
+          task.modelVersion,
+          task.status,
+          projectName(projects, task.projectId ?? "")
+        ].filter(Boolean).join(" ").toLowerCase();
+        return haystack.includes(normalized);
+      })
+      .sort((a, b) => {
+        if (sort === "oldest") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        if (sort === "status") return a.status.localeCompare(b.status);
+        if (sort === "project") return projectName(projects, a.projectId ?? "").localeCompare(projectName(projects, b.projectId ?? ""), "zh-CN");
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }, [projects, query, sort, status, tasks]);
   if (!tasks.length) return <section className="manager-record-empty"><Film size={30} /><h2>暂无生成记录</h2><p>所有项目的生成任务都会出现在这里。</p></section>;
   return (
-    <section className="manager-record-grid">
-      {tasks.map((task) => (
+    <section className="manager-records">
+      <div className="manager-record-tools">
+        <label><Search size={16} /><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="搜索提示词 / 项目 / 模型 / ID" /></label>
+        <select value={status} onChange={(event) => setStatus(event.currentTarget.value as typeof status)}>
+          <option value="all">全部状态</option>
+          <option value="succeeded">成功</option>
+          <option value="running">运行中</option>
+          <option value="queued">排队中</option>
+          <option value="failed">失败</option>
+          <option value="hidden">已隐藏</option>
+        </select>
+        <select value={sort} onChange={(event) => setSort(event.currentTarget.value as typeof sort)}>
+          <option value="newest">最新优先</option>
+          <option value="oldest">最早优先</option>
+          <option value="status">按状态</option>
+          <option value="project">按项目</option>
+        </select>
+      </div>
+      {!filtered.length && <section className="manager-record-empty compact"><Search size={24} /><h2>没有匹配记录</h2><p>换一个搜索词或筛选条件。</p></section>}
+      <div className="manager-record-grid">
+      {filtered.map((task) => (
         <article className={`manager-record-card ${task.status}`} key={task.id}>
           <div className="manager-record-preview">
             {videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls preload="metadata" /> : <TaskPlaceholder status={task.status} />}
@@ -1016,6 +1167,7 @@ function ManagerRecords({ tasks, projects, busy, onHardDelete }: { tasks: VideoT
           </div>
         </article>
       ))}
+      </div>
     </section>
   );
 }

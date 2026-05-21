@@ -1,7 +1,7 @@
 import type { AppConfig } from "./config.js";
 import { buildCreateAssetGroupPayload, buildCreateAssetPayload, type AssetType } from "./payloads.js";
 import { signVolcengineRequest } from "./volcengineSigner.js";
-import type { Asset, AssetGroup } from "../types.js";
+import type { Asset, AssetGroup, RuntimeSettings } from "../types.js";
 
 const apiVersion = "2024-01-01";
 const endpoint = "https://open.volcengineapi.com";
@@ -9,12 +9,17 @@ const withProjectName = (payload: Record<string, unknown>, projectName?: string)
   if (projectName) payload.ProjectName = projectName;
   return payload;
 };
+type RuntimeSettingsProvider = () => RuntimeSettings | Promise<RuntimeSettings>;
 
 export class AssetsClient {
-  constructor(private readonly config: AppConfig) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly runtimeSettings?: RuntimeSettingsProvider
+  ) {}
 
-  isConfigured() {
-    return Boolean(this.config.volcengineAK && this.config.volcengineSK);
+  async isConfigured() {
+    const settings = await this.settings();
+    return Boolean(settings.volcengineAK && settings.volcengineSK);
   }
 
   async createAssetGroup(input: { name: string; description?: string; projectName?: string }) {
@@ -113,7 +118,8 @@ export class AssetsClient {
   }
 
   private async call(action: string, payload: unknown) {
-    if (!this.isConfigured()) {
+    const settings = await this.settings();
+    if (!settings.volcengineAK || !settings.volcengineSK) {
       throw new Error("缺少 VOLCENGINE_AK / VOLCENGINE_SK，无法调用 Assets API。");
     }
     const body = JSON.stringify(payload);
@@ -126,10 +132,10 @@ export class AssetsClient {
       path: "/",
       query,
       body,
-      region: this.config.volcengineRegion,
-      service: this.config.volcengineService,
-      accessKey: this.config.volcengineAK,
-      secretKey: this.config.volcengineSK
+      region: settings.volcengineRegion || "cn-beijing",
+      service: settings.volcengineService || "ark",
+      accessKey: settings.volcengineAK,
+      secretKey: settings.volcengineSK
     });
     const response = await fetch(`${endpoint}/?${query}`, {
       method: "POST",
@@ -149,6 +155,27 @@ export class AssetsClient {
       throw new Error(`${action} 调用失败：${message}`);
     }
     return decoded;
+  }
+
+  private async settings(): Promise<RuntimeSettings> {
+    return this.runtimeSettings ? await this.runtimeSettings() : {
+      port: String(this.config.port),
+      host: this.config.host,
+      databasePath: this.config.databasePath,
+      downloadDir: this.config.downloadDir,
+      uploadDir: this.config.uploadDir,
+      volcengineAK: this.config.volcengineAK,
+      volcengineSK: this.config.volcengineSK,
+      volcengineRegion: this.config.volcengineRegion,
+      volcengineService: this.config.volcengineService,
+      arkAPIKey: this.config.arkAPIKey,
+      arkVideoModel: this.config.arkVideoModel,
+      arkBaseURL: this.config.arkBaseURL,
+      imageHostURL: this.config.imageHostURL,
+      assetProjectName: this.config.assetProjectName,
+      pollIntervalSeconds: String(this.config.pollIntervalMs / 1000),
+      pollTimeoutSeconds: String(this.config.pollTimeoutMs / 1000)
+    };
   }
 }
 

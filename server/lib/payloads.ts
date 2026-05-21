@@ -37,6 +37,8 @@ export interface VideoReferenceInput {
   assetId?: string;
   sourceUrl?: string;
   previewUrl?: string;
+  localPath?: string;
+  localUrl?: string;
   assetType: AssetType;
   role: VideoReferenceRole;
   label?: string;

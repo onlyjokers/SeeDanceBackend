@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { JSONFilePreset } from "lowdb/node";
 import type { AppConfig } from "./config.js";
+import { nonBlankRuntimeSettings, runtimeSettingsFromConfig, trimRuntimeSettings } from "./runtimeSettings.js";
 import type { Asset, AssetGroup, DatabaseShape, PollLog, RuntimeSettings, VideoProject, VideoTask } from "../types.js";
 import type { VideoTaskRequest } from "./requestSchemas.js";
 
@@ -14,10 +15,22 @@ const defaultData: DatabaseShape = {
 };
 
 export const defaultRuntimeSettings: RuntimeSettings = {
+  port: "8787",
+  host: "0.0.0.0",
+  databasePath: "data/seendance.json",
+  downloadDir: "data/downloads",
+  uploadDir: "data/uploads",
+  volcengineAK: "",
+  volcengineSK: "",
+  volcengineRegion: "cn-beijing",
+  volcengineService: "ark",
   arkAPIKey: "",
   arkVideoModel: "ep-20260518141207-xbt4q",
   arkBaseURL: "https://ark.cn-beijing.volces.com",
-  imageHostURL: "https://uguu.se/upload.php"
+  imageHostURL: "https://uguu.se/upload.php",
+  assetProjectName: "",
+  pollIntervalSeconds: "5",
+  pollTimeoutSeconds: "900"
 };
 
 export type AppDB = Awaited<ReturnType<typeof openDB>>;
@@ -33,11 +46,8 @@ export async function openDB(path: string) {
 export async function getRuntimeSettings(db: AppDB, config: AppConfig): Promise<RuntimeSettings> {
   const settings = {
     ...defaultRuntimeSettings,
-    arkAPIKey: config.arkAPIKey || defaultRuntimeSettings.arkAPIKey,
-    arkVideoModel: config.arkVideoModel || defaultRuntimeSettings.arkVideoModel,
-    arkBaseURL: config.arkBaseURL || defaultRuntimeSettings.arkBaseURL,
-    imageHostURL: config.imageHostURL || defaultRuntimeSettings.imageHostURL,
-    ...db.data.runtimeSettings
+    ...runtimeSettingsFromConfig(config),
+    ...nonBlankRuntimeSettings(db.data.runtimeSettings)
   };
   if (!db.data.runtimeSettings) {
     await updateRuntimeSettings(db, settings);
@@ -195,10 +205,4 @@ export async function addPollLog(db: AppDB, taskId: string, message: string, raw
     data.pollLogs.unshift(log);
     data.pollLogs = data.pollLogs.slice(0, 500);
   });
-}
-
-function trimRuntimeSettings(patch: Partial<RuntimeSettings>): Partial<RuntimeSettings> {
-  return Object.fromEntries(
-    Object.entries(patch).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value])
-  ) as Partial<RuntimeSettings>;
 }

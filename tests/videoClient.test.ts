@@ -8,6 +8,7 @@ const config: AppConfig = {
   host: "127.0.0.1",
   databasePath: "data/test.json",
   downloadDir: "data/downloads",
+  uploadDir: "data/uploads",
   volcengineAK: "",
   volcengineSK: "",
   volcengineRegion: "cn-beijing",
@@ -22,10 +23,22 @@ const config: AppConfig = {
 };
 
 const runtimeSettings: RuntimeSettings = {
+  port: "8787",
+  host: "127.0.0.1",
+  databasePath: "data/test.json",
+  downloadDir: "data/downloads",
+  uploadDir: "data/uploads",
+  volcengineAK: "",
+  volcengineSK: "",
+  volcengineRegion: "cn-beijing",
+  volcengineService: "ark",
   arkAPIKey: "ark-test",
   arkVideoModel: "ep-should-not-override-selected-model",
   arkBaseURL: "https://ark.cn-beijing.volces.com",
-  imageHostURL: "https://uguu.se/upload.php"
+  imageHostURL: "https://uguu.se/upload.php",
+  assetProjectName: "",
+  pollIntervalSeconds: "5",
+  pollTimeoutSeconds: "900"
 };
 
 describe("VideoClient", () => {

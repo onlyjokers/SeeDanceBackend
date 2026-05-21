@@ -55,10 +55,22 @@ export class VideoClient {
 
   private async settings(): Promise<RuntimeSettings> {
     return this.runtimeSettings ? await this.runtimeSettings() : {
+      port: String(this.config.port),
+      host: this.config.host,
+      databasePath: this.config.databasePath,
+      downloadDir: this.config.downloadDir,
+      uploadDir: this.config.uploadDir,
+      volcengineAK: this.config.volcengineAK,
+      volcengineSK: this.config.volcengineSK,
+      volcengineRegion: this.config.volcengineRegion,
+      volcengineService: this.config.volcengineService,
       arkAPIKey: this.config.arkAPIKey,
       arkVideoModel: this.config.arkVideoModel,
       arkBaseURL: this.config.arkBaseURL,
-      imageHostURL: this.config.imageHostURL
+      imageHostURL: this.config.imageHostURL,
+      assetProjectName: this.config.assetProjectName,
+      pollIntervalSeconds: String(this.config.pollIntervalMs / 1000),
+      pollTimeoutSeconds: String(this.config.pollTimeoutMs / 1000)
     };
   }
 
