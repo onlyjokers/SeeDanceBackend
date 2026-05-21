@@ -155,6 +155,7 @@ export async function createVideoTask(db: AppDB, input: VideoTaskRequest, assetI
     modelVersion: input.modelVersion,
     ratio: input.ratio,
     duration: input.duration,
+    resolution: input.resolution,
     references: input.references,
     status: "queued",
     createdAt: now,

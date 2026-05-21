@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { videoModelVersions, videoRatios } from "./payloads.js";
+import { videoModelVersions, videoRatios, videoResolutions } from "./payloads.js";
 
 export const videoTaskRequestSchema = z.object({
   projectId: z.string().optional(),
@@ -9,6 +9,7 @@ export const videoTaskRequestSchema = z.object({
   modelVersion: z.enum(videoModelVersions).default("doubao-seedance-2-0-fast-260128"),
   ratio: z.enum(videoRatios).default("16:9"),
   duration: z.number().int().min(4).max(15).default(5),
+  resolution: z.enum(videoResolutions).default("720p"),
   references: z.array(z.object({
     role: z.enum(["reference", "first_frame", "last_frame"]),
     sourceUrl: z.string().url().optional(),
@@ -20,6 +21,13 @@ export const videoTaskRequestSchema = z.object({
     label: z.string().optional()
   })).default([])
 }).superRefine((value, context) => {
+  if (value.modelVersion === "doubao-seedance-2-0-fast-260128" && value.resolution === "1080p") {
+    context.addIssue({
+      code: "custom",
+      path: ["resolution"],
+      message: "Seedance 2.0 Fast 不支持 1080p"
+    });
+  }
   if (value.mode === "multimodal" && value.references.length > 9) {
     context.addIssue({
       code: "custom",

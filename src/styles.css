@@ -775,6 +775,12 @@ button:disabled {
   background: #303541;
 }
 
+.floating-menu button:disabled {
+  cursor: not-allowed;
+  color: #697282;
+  opacity: 0.55;
+}
+
 .floating-menu .option-check {
   margin-left: auto;
 }
@@ -828,6 +834,11 @@ button:disabled {
 
 .duration-menu {
   right: 160px;
+}
+
+.resolution-menu {
+  right: 120px;
+  min-width: 220px;
 }
 
 .ratio-icon {
@@ -1406,7 +1417,8 @@ button:disabled {
 
   .floating-menu,
   .ratio-menu,
-  .duration-menu {
+  .duration-menu,
+  .resolution-menu {
     left: 18px;
     right: 18px;
     bottom: 92px;

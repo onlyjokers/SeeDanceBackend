@@ -1,4 +1,4 @@
-import type { AssetType, ReferenceTransport, VideoMode, VideoModelVersion, VideoRatio, VideoReferenceInput } from "./lib/payloads.js";
+import type { AssetType, ReferenceTransport, VideoMode, VideoModelVersion, VideoRatio, VideoReferenceInput, VideoResolution } from "./lib/payloads.js";
 
 export interface AssetGroup {
   id: string;
@@ -37,6 +37,7 @@ export interface VideoTask {
   modelVersion?: VideoModelVersion;
   ratio?: VideoRatio;
   duration?: number;
+  resolution?: VideoResolution;
   references?: VideoReferenceInput[];
   status: "queued" | "running" | "succeeded" | "failed";
   errorMessage?: string;

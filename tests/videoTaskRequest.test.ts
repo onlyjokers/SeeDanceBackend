@@ -14,6 +14,7 @@ describe("video task request schema", () => {
       modelVersion: "doubao-seedance-2-0-fast-260128",
       ratio: "16:9",
       duration: 5,
+      resolution: "720p",
       references: []
     });
   });
@@ -35,6 +36,26 @@ describe("video task request schema", () => {
         }
       ]
     }).references).toHaveLength(1);
+  });
+
+  it("accepts 1080p for non-fast Seedance 2.0", () => {
+    expect(parseVideoTaskRequest({
+      mode: "text",
+      prompt: "城市街道延时摄影",
+      modelVersion: "doubao-seedance-2-0-260128",
+      resolution: "1080p",
+      references: []
+    }).resolution).toBe("1080p");
+  });
+
+  it("rejects 1080p for Seedance 2.0 Fast", () => {
+    expect(() => parseVideoTaskRequest({
+      mode: "text",
+      prompt: "城市街道延时摄影",
+      modelVersion: "doubao-seedance-2-0-fast-260128",
+      resolution: "1080p",
+      references: []
+    })).toThrow("Seedance 2.0 Fast 不支持 1080p");
   });
 
   it("requires two images for first-last-frame generation", () => {

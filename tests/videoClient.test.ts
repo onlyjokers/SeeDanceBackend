@@ -60,11 +60,14 @@ describe("VideoClient", () => {
       mode: "text",
       ratio: "16:9",
       duration: 5,
+      resolution: "1080p",
       references: []
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.model).toBe("doubao-seedance-2-0-fast-260128");
     expect(body.model).not.toBe("ep-should-not-override-selected-model");
+    expect(body.resolution).toBe("1080p");
+    expect(body).not.toHaveProperty("video_resolution");
   });
 });

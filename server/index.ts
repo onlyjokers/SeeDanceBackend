@@ -205,6 +205,7 @@ app.post("/api/video-tasks", asyncHandler(async (req, res) => {
       mode: input.mode,
       ratio: input.ratio,
       duration: input.duration,
+      resolution: input.resolution,
       references
     });
   });

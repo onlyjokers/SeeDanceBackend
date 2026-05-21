@@ -66,7 +66,8 @@ describe("video task payloads", () => {
     expect(payload.model).toBe("doubao-seedance-2-0-fast-260128");
     expect(payload.ratio).toBe("16:9");
     expect(payload.duration).toBe(5);
-    expect(payload.video_resolution).toBe("720p");
+    expect(payload.resolution).toBe("720p");
+    expect(payload).not.toHaveProperty("video_resolution");
     expect(JSON.stringify(payload)).toContain('"url":"asset://Asset-2026abc"');
     expect(JSON.stringify(payload)).toContain('"role":"reference_image"');
     expect(payload.content[0]).toEqual({
@@ -82,6 +83,7 @@ describe("video task payloads", () => {
       mode: "text",
       ratio: "1:1",
       duration: 8,
+      resolution: "1080p",
       references: []
     });
 
@@ -89,7 +91,7 @@ describe("video task payloads", () => {
       model: "doubao-seedance-2-0-fast-260128",
       duration: 8,
       ratio: "1:1",
-      video_resolution: "720p",
+      resolution: "1080p",
       content: [
         {
           type: "text",

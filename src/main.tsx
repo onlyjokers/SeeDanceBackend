@@ -14,6 +14,7 @@ import {
   FolderPlus,
   HardDrive,
   BarChart3,
+  Gauge,
   ImagePlus,
   KeyRound,
   Loader2,
@@ -35,6 +36,7 @@ type VideoMode = "multimodal" | "frames";
 type ReferenceTransport = "asset" | "url";
 type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";
 type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
+type VideoResolution = "480p" | "720p" | "1080p";
 type ReferenceRole = "reference" | "first_frame" | "last_frame";
 
 interface PublicConfig {
@@ -111,6 +113,7 @@ interface VideoTask {
   modelVersion?: VideoModelVersion;
   ratio?: VideoRatio;
   duration?: number;
+  resolution?: VideoResolution;
   references?: VideoReference[];
   status: "queued" | "running" | "succeeded" | "failed";
   errorMessage?: string;
@@ -197,6 +200,7 @@ const defaultModelVersion: VideoModelVersion = "doubao-seedance-2-0-fast-260128"
 
 const ratioOptions: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 const durationOptions = Array.from({ length: 12 }, (_, index) => index + 4);
+const resolutionOptions: VideoResolution[] = ["480p", "720p", "1080p"];
 const multimodalReferenceLimit = 9;
 
 const modeLabels: Record<VideoMode, string> = {
@@ -212,11 +216,12 @@ function App() {
   const [modelVersion, setModelVersion] = useState<VideoModelVersion>(defaultModelVersion);
   const [ratio, setRatio] = useState<VideoRatio>("16:9");
   const [duration, setDuration] = useState(5);
+  const [resolution, setResolution] = useState<VideoResolution>("720p");
   const [prompt, setPrompt] = useState("");
   const [slots, setSlots] = useState<ReferenceSlot[]>(initialSlots("frames"));
   const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
-  const [openMenu, setOpenMenu] = useState<"mode" | "model" | "ratio" | "duration" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"mode" | "model" | "ratio" | "duration" | "resolution" | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [view, setView] = useState<"generate" | "assets">("generate");
@@ -228,6 +233,7 @@ function App() {
   const sessionTasks = useMemo(() => sortTasksForBottomStack(visibleTasks.filter((task) => (task.projectId ?? state.videoProjects[0]?.id) === activeProjectId)), [activeProjectId, state.videoProjects, visibleTasks]);
   const generatedAssets = useMemo(() => sortTasksForBottomStack(visibleTasks.filter((task) => task.videoUrl || task.downloadPath)), [visibleTasks]);
   const selectedModel = modelOptions.find((item) => item.value === modelVersion) ?? modelOptions[0];
+  const availableResolutions = useMemo(() => allowedResolutions(modelVersion), [modelVersion]);
 
   async function refresh() {
     const [configResponse, stateResponse] = await Promise.all([fetch("/api/config"), fetch("/api/state")]);
@@ -255,6 +261,13 @@ function App() {
     setMode(nextMode);
     setSlots(initialSlots(nextMode));
     setOpenMenu(null);
+  }
+
+  function chooseModel(nextModel: VideoModelVersion) {
+    setModelVersion(nextModel);
+    if (!allowedResolutions(nextModel).includes(resolution)) {
+      setResolution("720p");
+    }
   }
 
   async function submitVideoTask(overrides?: Partial<ComposerPayload>) {
@@ -288,6 +301,7 @@ function App() {
       modelVersion,
       ratio,
       duration,
+      resolution,
       references: slots
         .filter((slot) => slot.url)
         .map((slot) => ({
@@ -309,6 +323,7 @@ function App() {
     setModelVersion(normalizeModelVersion(task.modelVersion));
     setRatio(task.ratio ?? "16:9");
     setDuration(task.duration ?? 5);
+    setResolution(normalizeResolution(task.resolution, normalizeModelVersion(task.modelVersion)));
     setPrompt(task.prompt);
     setSlots(slotsFromTask(task));
     scrollTimelineToBottom("smooth");
@@ -322,6 +337,7 @@ function App() {
       modelVersion: normalizeModelVersion(task.modelVersion),
       ratio: task.ratio ?? "16:9",
       duration: task.duration ?? 5,
+      resolution: normalizeResolution(task.resolution, normalizeModelVersion(task.modelVersion)),
       references: task.references ?? []
     });
   }
@@ -498,6 +514,7 @@ function App() {
             <MenuButton active={false} onClick={() => switchMode(mode === "frames" ? "multimodal" : "frames")} icon={<FileImage size={18} />} label={modeLabels[mode]} />
             <MenuButton active={openMenu === "ratio"} onClick={() => setOpenMenu(openMenu === "ratio" ? null : "ratio")} icon={<RatioIcon ratio={ratio} />} label={ratio} />
             <MenuButton active={openMenu === "duration"} onClick={() => setOpenMenu(openMenu === "duration" ? null : "duration")} icon={<Clock3 size={18} />} label={`${duration}s`} />
+            <MenuButton active={openMenu === "resolution"} onClick={() => setOpenMenu(openMenu === "resolution" ? null : "resolution")} icon={<Gauge size={18} />} label={resolution} />
             <button className={`transport-toggle ${referenceTransport === "url" ? "active" : ""}`} onClick={() => setReferenceTransport(referenceTransport === "asset" ? "url" : "asset")} title="切换参考图片链路">
               {referenceTransport === "asset" ? "Asset" : "URL"}
             </button>
@@ -506,7 +523,7 @@ function App() {
             </button>
           </div>
           {openMenu && (
-            <FloatingMenu kind={openMenu} mode={mode} modelVersion={modelVersion} ratio={ratio} duration={duration} onMode={switchMode} onModel={setModelVersion} onRatio={setRatio} onDuration={setDuration} onClose={() => setOpenMenu(null)} />
+            <FloatingMenu kind={openMenu} mode={mode} modelVersion={modelVersion} ratio={ratio} duration={duration} resolution={resolution} availableResolutions={availableResolutions} onMode={switchMode} onModel={chooseModel} onRatio={setRatio} onDuration={setDuration} onResolution={setResolution} onClose={() => setOpenMenu(null)} />
           )}
         </div>
       </section>}
@@ -522,6 +539,7 @@ interface ComposerPayload {
   modelVersion: VideoModelVersion;
   ratio: VideoRatio;
   duration: number;
+  resolution: VideoResolution;
   references: VideoReference[];
 }
 
@@ -723,16 +741,19 @@ function MenuButton({ icon, label, active, onClick }: { icon: React.ReactNode; l
   return <button className={`menu-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span><ChevronDown size={16} /></button>;
 }
 
-function FloatingMenu({ kind, mode, modelVersion, ratio, duration, onMode, onModel, onRatio, onDuration, onClose }: {
-  kind: "mode" | "model" | "ratio" | "duration";
+function FloatingMenu({ kind, mode, modelVersion, ratio, duration, resolution, availableResolutions, onMode, onModel, onRatio, onDuration, onResolution, onClose }: {
+  kind: "mode" | "model" | "ratio" | "duration" | "resolution";
   mode: VideoMode;
   modelVersion: VideoModelVersion;
   ratio: VideoRatio;
   duration: number;
+  resolution: VideoResolution;
+  availableResolutions: VideoResolution[];
   onMode: (value: VideoMode) => void;
   onModel: (value: VideoModelVersion) => void;
   onRatio: (value: VideoRatio) => void;
   onDuration: (value: number) => void;
+  onResolution: (value: VideoResolution) => void;
   onClose: () => void;
 }) {
   if (kind === "ratio") {
@@ -740,6 +761,12 @@ function FloatingMenu({ kind, mode, modelVersion, ratio, duration, onMode, onMod
   }
   if (kind === "duration") {
     return <div className="floating-menu duration-menu"><p>选择视频生成时长</p>{durationOptions.map((item) => <button key={item} className={duration === item ? "selected" : ""} onClick={() => { onDuration(item); onClose(); }}><Clock3 size={18} />{item}s{duration === item && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
+  if (kind === "resolution") {
+    return <div className="floating-menu resolution-menu"><p>选择清晰度</p>{resolutionOptions.map((item) => {
+      const disabled = !availableResolutions.includes(item);
+      return <button key={item} disabled={disabled} className={resolution === item ? "selected" : ""} title={disabled ? "Seedance 2.0 Fast 不支持 1080p" : undefined} onClick={() => { if (disabled) return; onResolution(item); onClose(); }}><Gauge size={18} />{item}{resolution === item && <Check className="option-check" size={18} />}</button>;
+    })}</div>;
   }
   if (kind === "model") {
     return <div className="floating-menu model-menu"><p>选择模型</p>{modelOptions.map((item) => <button key={item.value} className={modelVersion === item.value ? "selected" : ""} onClick={() => { onModel(item.value); onClose(); }}><Film size={18} />{item.label}{modelVersion === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
@@ -791,6 +818,7 @@ function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete }:
         <p>{task.prompt}</p>
         <span>{model}</span>
         <span>{task.duration ?? 5}s</span>
+        <span>{task.resolution ?? "720p"}</span>
         <span>{modeLabels[(task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal"]}</span>
         <span className={`status-badge ${task.status}`}>{taskStatusLabel(task, latestLog)}</span>
       </div>
@@ -1198,6 +1226,18 @@ function modelLabel(value: string) {
 
 function normalizeModelVersion(value?: string): VideoModelVersion {
   return modelOptions.find((item) => item.value === value)?.value ?? defaultModelVersion;
+}
+
+function allowedResolutions(modelVersion: VideoModelVersion): VideoResolution[] {
+  return modelVersion === "doubao-seedance-2-0-fast-260128"
+    ? ["480p", "720p"]
+    : resolutionOptions;
+}
+
+function normalizeResolution(value: string | undefined, modelVersion: VideoModelVersion): VideoResolution {
+  const fallback: VideoResolution = "720p";
+  const resolution = resolutionOptions.find((item) => item === value) ?? fallback;
+  return allowedResolutions(modelVersion).includes(resolution) ? resolution : fallback;
 }
 
 function formatDate(value: string) {

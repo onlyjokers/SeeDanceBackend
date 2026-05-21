@@ -3,6 +3,7 @@ export type VideoMode = "text" | "multimodal" | "frames";
 export type ReferenceTransport = "asset" | "url";
 export type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";
 export type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
+export type VideoResolution = "480p" | "720p" | "1080p";
 export type VideoReferenceRole = "reference" | "first_frame" | "last_frame";
 
 export const videoModelVersions: VideoModelVersion[] = [
@@ -12,6 +13,7 @@ export const videoModelVersions: VideoModelVersion[] = [
 
 export const videoRatios: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 export const videoDurations = Array.from({ length: 12 }, (_, index) => index + 4);
+export const videoResolutions: VideoResolution[] = ["480p", "720p", "1080p"];
 
 export interface CreateAssetGroupInput {
   name: string;
@@ -50,6 +52,7 @@ export interface VideoTaskInput {
   mode: VideoMode;
   ratio: VideoRatio;
   duration: number;
+  resolution?: VideoResolution;
   references: VideoReferenceInput[];
 }
 
@@ -64,7 +67,7 @@ interface VideoContentItem {
 interface VideoTaskPayload {
   model: VideoModelVersion;
   duration: number;
-  video_resolution: "720p";
+  resolution: VideoResolution;
   ratio?: VideoRatio;
   content: VideoContentItem[];
 }
@@ -94,7 +97,7 @@ export function buildVideoTaskPayload(input: VideoTaskInput): VideoTaskPayload {
   const payload: VideoTaskPayload = {
     model: input.modelVersion,
     duration: input.duration,
-    video_resolution: "720p",
+    resolution: input.resolution ?? "720p",
     content: [
       {
         type: "text",
