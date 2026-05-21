@@ -284,7 +284,7 @@ button:disabled {
 }
 
 .toast {
-  width: min(980px, calc(100vw - 420px));
+  width: min(1280px, calc(100vw - 390px));
   margin-bottom: 10px;
   padding: 12px 16px;
   border: 1px solid rgba(255, 151, 120, 0.35);
@@ -317,7 +317,7 @@ button:disabled {
 
 .composer {
   position: relative;
-  width: min(900px, calc(100vw - 420px));
+  width: min(1220px, calc(100vw - 390px));
   min-height: 158px;
   padding: 18px;
   border: 1px solid #23262e;
@@ -496,14 +496,8 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   white-space: nowrap;
-  scrollbar-width: none;
-}
-
-.composer-controls::-webkit-scrollbar {
-  display: none;
 }
 
 .menu-button,
@@ -533,7 +527,7 @@ button:disabled {
 }
 
 .menu-button span {
-  max-width: 190px;
+  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -564,7 +558,7 @@ button:disabled {
 
 .floating-menu {
   position: absolute;
-  right: 72px;
+  left: 18px;
   bottom: 76px;
   z-index: 60;
   display: grid;
@@ -577,6 +571,15 @@ button:disabled {
   border-radius: 18px;
   background: #1a1d24;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+}
+
+.mode-menu {
+  left: 18px;
+}
+
+.model-menu {
+  left: 230px;
+  min-width: 320px;
 }
 
 .conversation-rail {
@@ -814,7 +817,7 @@ button:disabled {
 }
 
 .ratio-menu {
-  right: 250px;
+  left: 690px;
   grid-template-columns: repeat(6, 84px);
   width: auto;
   max-width: min(620px, calc(100vw - 80px));
@@ -833,11 +836,11 @@ button:disabled {
 }
 
 .duration-menu {
-  right: 160px;
+  left: 860px;
 }
 
 .resolution-menu {
-  right: 120px;
+  left: 1010px;
   min-width: 220px;
 }
 

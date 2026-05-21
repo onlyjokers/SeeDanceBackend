@@ -38,6 +38,28 @@ describe("video task request schema", () => {
     }).references).toHaveLength(1);
   });
 
+  it("accepts local preview urls while keeping source urls public", () => {
+    const input = parseVideoTaskRequest({
+      mode: "multimodal",
+      referenceTransport: "url",
+      prompt: "图片 1 的人物转身",
+      references: [
+        {
+          role: "reference",
+          sourceUrl: "https://uguu.se/reference.png",
+          previewUrl: "/api/uploads/local/reference.png",
+          localUrl: "/api/uploads/local/reference.png",
+          localPath: "/tmp/reference.png",
+          assetType: "Image"
+        }
+      ]
+    });
+
+    expect(input.references[0].sourceUrl).toBe("https://uguu.se/reference.png");
+    expect(input.references[0].previewUrl).toBe("/api/uploads/local/reference.png");
+    expect(input.references[0].localUrl).toBe("/api/uploads/local/reference.png");
+  });
+
   it("accepts 1080p for non-fast Seedance 2.0", () => {
     expect(parseVideoTaskRequest({
       mode: "text",
@@ -56,6 +78,22 @@ describe("video task request schema", () => {
       resolution: "1080p",
       references: []
     })).toThrow("Seedance 2.0 Fast 不支持 1080p");
+  });
+
+  it("rejects legacy non-official Seedance model ids", () => {
+    expect(() => parseVideoTaskRequest({
+      mode: "text",
+      prompt: "城市街道延时摄影",
+      modelVersion: "seedance2.0fast",
+      references: []
+    })).toThrow();
+
+    expect(() => parseVideoTaskRequest({
+      mode: "text",
+      prompt: "城市街道延时摄影",
+      modelVersion: "seedance2.0",
+      references: []
+    })).toThrow();
   });
 
   it("requires two images for first-last-frame generation", () => {

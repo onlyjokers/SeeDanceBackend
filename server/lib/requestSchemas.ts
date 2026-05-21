@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { videoModelVersions, videoRatios, videoResolutions } from "./payloads.js";
 
+const previewUrlSchema = z.string().refine((value) => {
+  if (value.startsWith("/api/uploads/local/")) return true;
+  return z.string().url().safeParse(value).success;
+}, "Invalid preview URL");
+
 export const videoTaskRequestSchema = z.object({
   projectId: z.string().optional(),
   mode: z.enum(["text", "multimodal", "frames"]).default("multimodal"),
@@ -13,9 +18,9 @@ export const videoTaskRequestSchema = z.object({
   references: z.array(z.object({
     role: z.enum(["reference", "first_frame", "last_frame"]),
     sourceUrl: z.string().url().optional(),
-    previewUrl: z.string().url().optional(),
+    previewUrl: previewUrlSchema.optional(),
     localPath: z.string().optional(),
-    localUrl: z.string().optional(),
+    localUrl: previewUrlSchema.optional(),
     assetId: z.string().optional(),
     assetType: z.enum(["Image", "Video", "Audio"]).default("Image"),
     label: z.string().optional()
