@@ -21,7 +21,7 @@ const config: AppConfig = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "QiShiYi",
   pollIntervalMs: 5000,
-  pollTimeoutMs: 900000
+  pollTimeoutMs: 3600000
 };
 
 describe("expanded runtime settings", () => {
@@ -45,7 +45,7 @@ describe("expanded runtime settings", () => {
       imageHostURL: "https://uguu.se/upload.php",
       assetProjectName: "QiShiYi",
       pollIntervalSeconds: "5",
-      pollTimeoutSeconds: "900"
+      pollTimeoutSeconds: "3600"
     });
   });
 
@@ -66,6 +66,22 @@ describe("expanded runtime settings", () => {
       volcengineSK: "sk-next",
       assetProjectName: "NextProject",
       pollIntervalSeconds: "10",
+      pollTimeoutSeconds: "1200"
+    });
+  });
+
+  it("upgrades older default polling timeouts without overwriting custom manager values", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "seendance-settings-"));
+    const db = await openDB(join(dir, "db.json"));
+    await updateRuntimeSettings(db, { pollTimeoutSeconds: "900" });
+
+    await expect(getRuntimeSettings(db, config)).resolves.toMatchObject({
+      pollTimeoutSeconds: "3600"
+    });
+
+    await updateRuntimeSettings(db, { pollTimeoutSeconds: "1200" });
+
+    await expect(getRuntimeSettings(db, config)).resolves.toMatchObject({
       pollTimeoutSeconds: "1200"
     });
   });
@@ -107,6 +123,6 @@ function awaitableRuntimeSettingsFallback() {
     imageHostURL: "https://uguu.se/upload.php",
     assetProjectName: "QiShiYi",
     pollIntervalSeconds: "5",
-    pollTimeoutSeconds: "900"
+    pollTimeoutSeconds: "3600"
   };
 }

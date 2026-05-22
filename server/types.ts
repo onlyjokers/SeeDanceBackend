@@ -41,12 +41,19 @@ export interface VideoTask {
   references?: VideoReferenceInput[];
   status: "queued" | "running" | "succeeded" | "failed";
   errorMessage?: string;
+  tokenUsage?: TokenUsage;
   videoUrl?: string;
   downloadPath?: string;
   hiddenAt?: string;
   raw?: unknown;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
 }
 
 export interface VideoProject {

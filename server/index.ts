@@ -15,6 +15,7 @@ import { mountStaticClient } from "./lib/staticRouter.js";
 import { summarizeLocalUsage } from "./lib/usageStats.js";
 import { emptyOfficialUsage, InferenceUsageClient } from "./lib/inferenceUsageClient.js";
 import { fileFromLocalUpload, resolveLocalUploadPath, saveUploadedImageLocally } from "./lib/localUploadStore.js";
+import { buildTaskDebugExport } from "./lib/taskDebugExport.js";
 import type { RuntimeSettings } from "./types.js";
 
 const config = loadConfig();
@@ -223,6 +224,14 @@ app.get("/api/video-tasks/:id/download", asyncHandler(async (req, res) => {
   if (!task) return res.status(404).json({ error: "视频任务不存在。" });
   const path = getDownloadPathForTask(task);
   res.download(path);
+}));
+
+app.get("/api/video-tasks/:id/debug", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const debugExport = buildTaskDebugExport(db.data, id);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="seendance-task-${id}-debug.json"`);
+  res.send(JSON.stringify(debugExport, null, 2));
 }));
 
 app.delete("/api/video-tasks/:id", asyncHandler(async (req, res) => {

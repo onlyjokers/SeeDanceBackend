@@ -19,7 +19,7 @@ const config: AppConfig = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "",
   pollIntervalMs: 5000,
-  pollTimeoutMs: 900000
+  pollTimeoutMs: 3600000
 };
 
 const runtimeSettings: RuntimeSettings = {
@@ -38,7 +38,7 @@ const runtimeSettings: RuntimeSettings = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "",
   pollIntervalSeconds: "5",
-  pollTimeoutSeconds: "900"
+  pollTimeoutSeconds: "3600"
 };
 
 describe("VideoClient", () => {

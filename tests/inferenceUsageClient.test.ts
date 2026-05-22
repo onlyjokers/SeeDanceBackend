@@ -26,7 +26,7 @@ const settings: RuntimeSettings = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "QiShiYi",
   pollIntervalSeconds: "5",
-  pollTimeoutSeconds: "900"
+  pollTimeoutSeconds: "3600"
 };
 
 describe("InferenceUsageClient", () => {

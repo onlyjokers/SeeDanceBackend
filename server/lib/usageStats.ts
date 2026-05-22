@@ -1,4 +1,5 @@
 import type { DatabaseShape, VideoTask } from "../types.js";
+import { resolveTaskTokenUsage } from "./taskTokenUsage.js";
 
 export interface LocalUsageSummary {
   source: "local";
@@ -9,6 +10,9 @@ export interface LocalUsageSummary {
     hidden: number;
     downloaded: number;
     referenceImages: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
   };
   byStatus: Record<VideoTask["status"], number>;
   byProject: Array<{ projectId: string; projectName: string; requests: number; succeeded: number; failed: number; hidden: number }>;
@@ -25,12 +29,19 @@ export function summarizeLocalUsage(data: DatabaseShape): LocalUsageSummary {
   let hidden = 0;
   let downloaded = 0;
   let referenceImages = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
 
   for (const task of data.videoTasks) {
     byStatus[task.status] += 1;
     if (task.hiddenAt) hidden += 1;
     if (task.downloadPath) downloaded += 1;
     referenceImages += (task.references ?? []).filter((reference) => reference.assetType === "Image").length;
+    const tokenUsage = resolveTaskTokenUsage(task, data.pollLogs.filter((log) => log.taskId === task.id));
+    inputTokens += tokenUsage?.inputTokens ?? 0;
+    outputTokens += tokenUsage?.outputTokens ?? 0;
+    totalTokens += tokenUsage?.totalTokens ?? 0;
 
     const projectId = task.projectId || "default";
     const project = byProject.get(projectId) ?? {
@@ -66,7 +77,10 @@ export function summarizeLocalUsage(data: DatabaseShape): LocalUsageSummary {
       visible: data.videoTasks.length - hidden,
       hidden,
       downloaded,
-      referenceImages
+      referenceImages,
+      inputTokens,
+      outputTokens,
+      totalTokens
     },
     byStatus,
     byProject: [...byProject.values()].sort((a, b) => b.requests - a.requests),

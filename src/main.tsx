@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Clock3,
   CopyPlus,
+  Download,
   FilePenLine,
   FileImage,
   Film,
@@ -117,11 +118,19 @@ interface VideoTask {
   references?: VideoReference[];
   status: "queued" | "running" | "succeeded" | "failed";
   errorMessage?: string;
+  tokenUsage?: TokenUsage;
   videoUrl?: string;
   downloadPath?: string;
   hiddenAt?: string;
+  raw?: unknown;
   createdAt: string;
   updatedAt: string;
+}
+
+interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
 }
 
 interface PollLog {
@@ -149,6 +158,9 @@ interface LocalUsageSummary {
     hidden: number;
     downloaded: number;
     referenceImages: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
   };
   byStatus: Record<VideoTask["status"], number>;
   byProject: Array<{ projectId: string; projectName: string; requests: number; succeeded: number; failed: number; hidden: number }>;
@@ -473,7 +485,7 @@ function App() {
       </header>
 
       {view === "assets" ? (
-        <AssetLibrary tasks={generatedAssets} pollLogs={state.pollLogs} onEdit={restoreTask} onRegenerate={regenerateTask} onDelete={deleteTask} />
+        <AssetLibrary tasks={generatedAssets} pollLogs={state.pollLogs} onEdit={restoreTask} onRegenerate={regenerateTask} onDelete={deleteTask} onDownloadDebug={downloadTaskDebug} />
       ) : (
         <section className="timeline">
           <div className="date-heading">5月19日</div>
@@ -493,6 +505,7 @@ function App() {
               onEdit={() => restoreTask(task)}
               onRegenerate={() => regenerateTask(task)}
               onDelete={() => deleteTask(task.id)}
+              onDownloadDebug={() => downloadTaskDebug(task.id)}
             />
           ))}
         </section>
@@ -778,12 +791,13 @@ function RatioIcon({ ratio }: { ratio: string }) {
   return <span className={`ratio-icon r-${ratio.replace(":", "-")}`} />;
 }
 
-function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete }: {
+function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete, onDownloadDebug }: {
   tasks: VideoTask[];
   pollLogs: PollLog[];
   onEdit: (task: VideoTask) => void;
   onRegenerate: (task: VideoTask) => void;
   onDelete: (taskId: string) => void;
+  onDownloadDebug: (taskId: string) => void;
 }) {
   return (
     <section className="asset-library">
@@ -802,6 +816,7 @@ function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete }: {
             onEdit={() => onEdit(task)}
             onRegenerate={() => onRegenerate(task)}
             onDelete={() => onDelete(task.id)}
+            onDownloadDebug={() => onDownloadDebug(task.id)}
           />
         ))}
       </div>
@@ -809,7 +824,7 @@ function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete }: {
   );
 }
 
-function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete }: { task: VideoTask; selected: boolean; latestLog?: PollLog; onEdit: () => void; onRegenerate: () => void; onDelete: () => void }) {
+function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete, onDownloadDebug }: { task: VideoTask; selected: boolean; latestLog?: PollLog; onEdit: () => void; onRegenerate: () => void; onDelete: () => void; onDownloadDebug: () => void }) {
   const model = modelOptions.find((item) => item.value === task.modelVersion)?.label ?? "Seedance 2.0";
   return (
     <article className={`history-card ${task.status} ${selected ? "selected" : ""}`} data-task-id={task.id}>
@@ -820,6 +835,7 @@ function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete }:
         <span>{task.duration ?? 5}s</span>
         <span>{task.resolution ?? "720p"}</span>
         <span>{modeLabels[(task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal"]}</span>
+        <span>{formatTokenUsage(resolveClientTokenUsage(task))}</span>
         <span className={`status-badge ${task.status}`}>{taskStatusLabel(task, latestLog)}</span>
       </div>
       <div className="result-frame">
@@ -828,6 +844,7 @@ function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete }:
       <div className="task-actions">
         <button onClick={onEdit}><PencilLine size={18} />重新编辑</button>
         <button onClick={onRegenerate}><CopyPlus size={18} />再次生成</button>
+        <button onClick={onDownloadDebug}><Download size={18} />下载状态</button>
         <button className="more-button"><RefreshCcw size={18} />{task.status}</button>
         <button className="delete-record" onClick={onDelete} title="删除记录，不删除下载文件"><Trash2 size={16} /></button>
       </div>
@@ -1075,7 +1092,7 @@ function ManagerApp() {
             <UsagePanel localUsage={localUsage} officialUsage={officialUsage} officialLoading={busy === "official-usage"} />
           </section>
         </section> : (
-          <ManagerRecords tasks={state.videoTasks} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} />
+          <ManagerRecords tasks={state.videoTasks} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} onDownloadDebug={downloadTaskDebug} />
         )}
       </section>
     </main>
@@ -1111,6 +1128,7 @@ function UsagePanel({ localUsage, officialUsage, officialLoading }: { localUsage
         <UsageMetric label="本地失败" value={localUsage.byStatus.failed} />
         <UsageMetric label="官方请求" value={officialUsage?.totals.requests ?? 0} />
         <UsageMetric label="官方 Token" value={officialUsage?.totals.totalTokens ?? 0} />
+        <UsageMetric label="任务 Token" value={localUsage.totals.totalTokens} />
         <UsageMetric label="官方图片量" value={officialUsage?.totals.imageCount ?? 0} />
       </div>
       {officialLoading && <p className="usage-note">正在刷新官方用量...</p>}
@@ -1124,7 +1142,7 @@ function UsagePanel({ localUsage, officialUsage, officialLoading }: { localUsage
   );
 }
 
-function ManagerRecords({ tasks, projects, busy, onHardDelete }: { tasks: VideoTask[]; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => void }) {
+function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }: { tasks: VideoTask[]; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => void; onDownloadDebug: (taskId: string) => void }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | VideoTask["status"] | "hidden">("all");
   const [sort, setSort] = useState<"newest" | "oldest" | "status" | "project">("newest");
@@ -1188,6 +1206,10 @@ function ManagerRecords({ tasks, projects, busy, onHardDelete }: { tasks: VideoT
             <p>{task.prompt}</p>
             <div className="manager-record-foot">
               <span>{task.downloadPath ? "本地视频" : task.videoUrl ? "远程视频" : "未生成"}</span>
+              <span>{formatTokenUsage(resolveClientTokenUsage(task))}</span>
+              <button className="hard-delete secondary" onClick={() => onDownloadDebug(task.id)}>
+                <Download size={15} />下载状态
+              </button>
               <button className="hard-delete" disabled={busy === `hard-delete-${task.id}`} onClick={() => onHardDelete(task.id)}>
                 <Trash2 size={15} />永久删除
               </button>
@@ -1222,6 +1244,57 @@ function UsageList({ title, rows }: { title: string; rows: string[][] }) {
 
 function modelLabel(value: string) {
   return modelOptions.find((item) => item.value === value)?.label ?? value;
+}
+
+function downloadTaskDebug(taskId: string) {
+  window.location.href = `/api/video-tasks/${taskId}/debug`;
+}
+
+function formatTokenUsage(tokenUsage?: TokenUsage) {
+  if (!tokenUsage) return "Token -";
+  return `Token ${new Intl.NumberFormat("zh-CN").format(tokenUsage.totalTokens)}`;
+}
+
+function resolveClientTokenUsage(task: VideoTask): TokenUsage | undefined {
+  return task.tokenUsage ?? extractClientTokenUsage(task.raw);
+}
+
+function extractClientTokenUsage(source: unknown): TokenUsage | undefined {
+  const inputTokens = findClientNumber(source, ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"]);
+  const outputTokens = findClientNumber(source, ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"]);
+  const totalTokens = findClientNumber(source, ["total_tokens", "totalTokens"]);
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined;
+  const input = inputTokens ?? 0;
+  const output = outputTokens ?? 0;
+  return { inputTokens: input, outputTokens: output, totalTokens: totalTokens ?? input + output };
+}
+
+function findClientNumber(source: unknown, keys: string[]): number | undefined {
+  const wanted = new Set(keys.map((key) => key.toLowerCase()));
+  const visit = (value: unknown): number | undefined => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    }
+    if (!value || typeof value !== "object") return undefined;
+    for (const [key, child] of Object.entries(value)) {
+      if (!wanted.has(key.toLowerCase())) continue;
+      if (typeof child === "number" && Number.isFinite(child)) return child;
+      if (typeof child === "string" && child.trim()) {
+        const parsed = Number(child);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+    }
+    for (const child of Object.values(value)) {
+      const found = visit(child);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  return visit(source);
 }
 
 function normalizeModelVersion(value?: string): VideoModelVersion {

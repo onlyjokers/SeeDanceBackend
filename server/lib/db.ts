@@ -30,7 +30,7 @@ export const defaultRuntimeSettings: RuntimeSettings = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "",
   pollIntervalSeconds: "5",
-  pollTimeoutSeconds: "900"
+  pollTimeoutSeconds: "3600"
 };
 
 export type AppDB = Awaited<ReturnType<typeof openDB>>;
@@ -44,15 +44,26 @@ export async function openDB(path: string) {
 }
 
 export async function getRuntimeSettings(db: AppDB, config: AppConfig): Promise<RuntimeSettings> {
+  const originalStoredSettings = nonBlankRuntimeSettings(db.data.runtimeSettings);
+  const storedSettings = migrateRuntimeSettingsDefaults(originalStoredSettings, config);
   const settings = {
     ...defaultRuntimeSettings,
     ...runtimeSettingsFromConfig(config),
-    ...nonBlankRuntimeSettings(db.data.runtimeSettings)
+    ...storedSettings
   };
-  if (!db.data.runtimeSettings) {
+  if (!db.data.runtimeSettings || storedSettings.pollTimeoutSeconds !== originalStoredSettings.pollTimeoutSeconds) {
     await updateRuntimeSettings(db, settings);
   }
   return settings;
+}
+
+function migrateRuntimeSettingsDefaults(settings: Partial<RuntimeSettings>, config: AppConfig): Partial<RuntimeSettings> {
+  const next = { ...settings };
+  const envTimeout = String(config.pollTimeoutMs / 1000);
+  if (next.pollTimeoutSeconds === "900" || next.pollTimeoutSeconds === "1800") {
+    next.pollTimeoutSeconds = envTimeout;
+  }
+  return next;
 }
 
 export async function updateRuntimeSettings(db: AppDB, patch: Partial<RuntimeSettings>): Promise<RuntimeSettings> {

@@ -2,6 +2,7 @@ import type { AppDB } from "./db.js";
 import { addPollLog, updateVideoTask } from "./db.js";
 import type { AppConfig } from "./config.js";
 import type { VideoClient } from "./videoClient.js";
+import { extractTokenUsage } from "./tokenUsage.js";
 
 type Job = () => Promise<void>;
 
@@ -67,6 +68,7 @@ export class SerialTaskRunner {
             status: "succeeded",
             videoUrl: status.videoUrl,
             downloadPath,
+            tokenUsage: extractTokenUsage(status.raw),
             raw: status.raw
           });
           await addPollLog(this.db, taskId, `视频已下载：${downloadPath}`, status.raw);

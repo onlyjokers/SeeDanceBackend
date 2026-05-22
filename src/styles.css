@@ -234,19 +234,23 @@ button:disabled {
   display: flex;
   gap: 10px;
   margin-top: 14px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .task-actions button {
   min-height: 36px;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 9px;
   padding: 0 13px;
   border-radius: 9px;
   background: #1b1d25;
   color: #f2f4f8;
   font-weight: 650;
+  white-space: nowrap;
 }
 
 .task-actions .delete-record {
@@ -1210,6 +1214,11 @@ button:disabled {
   background: rgba(255, 100, 88, 0.12);
   color: #ffaaa2;
   font-weight: 700;
+}
+
+.hard-delete.secondary {
+  background: rgba(109, 185, 255, 0.12);
+  color: #9fd0ff;
 }
 
 .manager-records {

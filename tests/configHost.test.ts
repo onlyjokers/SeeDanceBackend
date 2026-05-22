@@ -4,12 +4,15 @@ import { loadConfig } from "../server/lib/config.js";
 describe("server host binding", () => {
   const originalAssetProjectName = process.env.ASSET_PROJECT_NAME;
   const originalVolcengineService = process.env.VOLCENGINE_SERVICE;
+  const originalPollTimeoutSeconds = process.env.POLL_TIMEOUT_SECONDS;
 
   afterEach(() => {
     if (originalAssetProjectName === undefined) delete process.env.ASSET_PROJECT_NAME;
     else process.env.ASSET_PROJECT_NAME = originalAssetProjectName;
     if (originalVolcengineService === undefined) delete process.env.VOLCENGINE_SERVICE;
     else process.env.VOLCENGINE_SERVICE = originalVolcengineService;
+    if (originalPollTimeoutSeconds === undefined) delete process.env.POLL_TIMEOUT_SECONDS;
+    else process.env.POLL_TIMEOUT_SECONDS = originalPollTimeoutSeconds;
   });
 
   it("defaults to 0.0.0.0 so the app can be reached from the LAN", () => {
@@ -48,5 +51,13 @@ describe("server host binding", () => {
     const config = loadConfig();
 
     expect(config.volcengineService).toBe("ark");
+  });
+
+  it("defaults video polling timeout to one hour", () => {
+    delete process.env.POLL_TIMEOUT_SECONDS;
+
+    const config = loadConfig();
+
+    expect(config.pollTimeoutMs).toBe(3600 * 1000);
   });
 });

@@ -35,7 +35,7 @@ export function loadConfig(): AppConfig {
     imageHostURL: process.env.IMAGE_HOST_URL || "https://uguu.se/upload.php",
     assetProjectName: process.env.ASSET_PROJECT_NAME || "",
     pollIntervalMs: numberEnv("POLL_INTERVAL_SECONDS", 5) * 1000,
-    pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 900) * 1000,
+    pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 3600) * 1000,
     uploadDir: process.env.UPLOAD_DIR || "data/uploads"
   };
 }
