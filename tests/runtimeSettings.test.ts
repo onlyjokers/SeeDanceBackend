@@ -1,13 +1,21 @@
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { defaultRuntimeSettings, getRuntimeSettings, openDB, updateRuntimeSettings } from "../server/lib/db.js";
 import { loadConfig } from "../server/lib/config.js";
 import { uploadImageToTemporaryHost } from "../server/lib/uploadProvider.js";
 
 describe("runtime settings", () => {
+  const originalArkAPIKey = process.env.ARK_API_KEY;
+
+  afterEach(() => {
+    if (originalArkAPIKey === undefined) delete process.env.ARK_API_KEY;
+    else process.env.ARK_API_KEY = originalArkAPIKey;
+  });
+
   it("starts with the STS defaults requested for manager control", async () => {
+    delete process.env.ARK_API_KEY;
     const dir = await mkdtemp(join(tmpdir(), "seendance-db-"));
     const db = await openDB(join(dir, "db.json"));
 
