@@ -39,6 +39,16 @@ type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-
 type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
 type VideoResolution = "480p" | "720p" | "1080p";
 type ReferenceRole = "reference" | "first_frame" | "last_frame";
+type MenuKind = "mode" | "model" | "ratio" | "duration" | "resolution";
+type TopFilterKind = "time" | "mode" | "status";
+type TimeFilter = "all" | "today" | "week";
+type ModeFilter = "all" | VideoMode;
+type StatusFilter = "all" | VideoTask["status"];
+
+interface OpenMenuState {
+  kind: MenuKind;
+  x: number;
+}
 
 interface PublicConfig {
   assetsCredentialsConfigured: boolean;
@@ -233,17 +243,23 @@ function App() {
   const [slots, setSlots] = useState<ReferenceSlot[]>(initialSlots("frames"));
   const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
-  const [openMenu, setOpenMenu] = useState<"mode" | "model" | "ratio" | "duration" | "resolution" | null>(null);
+  const [openMenu, setOpenMenu] = useState<OpenMenuState | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [view, setView] = useState<"generate" | "assets">("generate");
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+  const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [openTopFilter, setOpenTopFilter] = useState<TopFilterKind | null>(null);
   const didInitialScrollRef = useRef(false);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
 
   const activeProjectId = selectedProjectId ?? state.videoProjects[0]?.id ?? "";
   const visibleTasks = useMemo(() => state.videoTasks.filter((task) => !task.hiddenAt), [state.videoTasks]);
-  const sessionTasks = useMemo(() => sortTasksForBottomStack(visibleTasks.filter((task) => (task.projectId ?? state.videoProjects[0]?.id) === activeProjectId)), [activeProjectId, state.videoProjects, visibleTasks]);
-  const generatedAssets = useMemo(() => sortTasksForBottomStack(visibleTasks.filter((task) => task.videoUrl || task.downloadPath)), [visibleTasks]);
+  const filteredTasks = useMemo(() => filterTasks(visibleTasks, { timeFilter, modeFilter, statusFilter }), [modeFilter, statusFilter, timeFilter, visibleTasks]);
+  const sessionTasks = useMemo(() => sortTasksForBottomStack(filteredTasks.filter((task) => (task.projectId ?? state.videoProjects[0]?.id) === activeProjectId)), [activeProjectId, state.videoProjects, filteredTasks]);
+  const generatedAssets = useMemo(() => sortTasksForBottomStack(filteredTasks.filter((task) => task.videoUrl || task.downloadPath)), [filteredTasks]);
   const selectedModel = modelOptions.find((item) => item.value === modelVersion) ?? modelOptions[0];
   const availableResolutions = useMemo(() => allowedResolutions(modelVersion), [modelVersion]);
 
@@ -273,6 +289,17 @@ function App() {
     setMode(nextMode);
     setSlots(initialSlots(nextMode));
     setOpenMenu(null);
+  }
+
+  function toggleMenu(kind: MenuKind, event: React.MouseEvent<HTMLButtonElement>) {
+    if (openMenu?.kind === kind) {
+      setOpenMenu(null);
+      return;
+    }
+    const buttonBox = event.currentTarget.getBoundingClientRect();
+    const composerBox = composerRef.current?.getBoundingClientRect();
+    const centerX = composerBox ? buttonBox.left + buttonBox.width / 2 - composerBox.left : buttonBox.width / 2;
+    setOpenMenu({ kind, x: centerX });
   }
 
   function chooseModel(nextModel: VideoModelVersion) {
@@ -476,12 +503,16 @@ function App() {
         }}
       />
       <header className="dream-topbar">
-        <div className="search-pill">
-          <button><Search size={17} /></button>
-          <button>时间<ChevronDown size={14} /></button>
-          <button>生成模式<ChevronDown size={14} /></button>
-          <button>操作类型<ChevronDown size={14} /></button>
-        </div>
+        <TopFilters
+          open={openTopFilter}
+          timeFilter={timeFilter}
+          modeFilter={modeFilter}
+          statusFilter={statusFilter}
+          onOpen={setOpenTopFilter}
+          onTime={setTimeFilter}
+          onMode={setModeFilter}
+          onStatus={setStatusFilter}
+        />
       </header>
 
       {view === "assets" ? (
@@ -513,7 +544,7 @@ function App() {
 
       {view === "generate" && <section className="composer-wrap">
         {toast && <div className="toast"><span>{toast}</span><button onClick={() => setToast("")} title="关闭提示">×</button></div>}
-        <div className="composer">
+        <div className="composer" ref={composerRef}>
           <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, remoteUrl: undefined, localPath: undefined, localUrl: undefined, error: "" } : slot))} onInsertReference={insertReference} />
           <textarea
             ref={promptRef}
@@ -522,12 +553,12 @@ function App() {
             placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：图片 1 模仿图片 2 的动作。"}
           />
           <div className="composer-controls">
-            <MenuButton active={openMenu === "mode"} onClick={() => setOpenMenu(openMenu === "mode" ? null : "mode")} icon={<Sparkles size={18} />} label="视频生成" />
-            <MenuButton active={openMenu === "model"} onClick={() => setOpenMenu(openMenu === "model" ? null : "model")} icon={<Film size={18} />} label={selectedModel.label} />
-            <MenuButton active={false} onClick={() => switchMode(mode === "frames" ? "multimodal" : "frames")} icon={<FileImage size={18} />} label={modeLabels[mode]} />
-            <MenuButton active={openMenu === "ratio"} onClick={() => setOpenMenu(openMenu === "ratio" ? null : "ratio")} icon={<RatioIcon ratio={ratio} />} label={ratio} />
-            <MenuButton active={openMenu === "duration"} onClick={() => setOpenMenu(openMenu === "duration" ? null : "duration")} icon={<Clock3 size={18} />} label={`${duration}s`} />
-            <MenuButton active={openMenu === "resolution"} onClick={() => setOpenMenu(openMenu === "resolution" ? null : "resolution")} icon={<Gauge size={18} />} label={resolution} />
+            <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<Sparkles size={18} />} label="视频生成" />
+            <MenuButton active={openMenu?.kind === "model"} onClick={(event) => toggleMenu("model", event)} icon={<Film size={18} />} label={selectedModel.label} />
+            <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<FileImage size={18} />} label={modeLabels[mode]} />
+            <MenuButton active={openMenu?.kind === "ratio"} onClick={(event) => toggleMenu("ratio", event)} icon={<RatioIcon ratio={ratio} />} label={ratio} />
+            <MenuButton active={openMenu?.kind === "duration"} onClick={(event) => toggleMenu("duration", event)} icon={<Clock3 size={18} />} label={`${duration}s`} />
+            <MenuButton active={openMenu?.kind === "resolution"} onClick={(event) => toggleMenu("resolution", event)} icon={<Gauge size={18} />} label={resolution} />
             <button className={`transport-toggle ${referenceTransport === "url" ? "active" : ""}`} onClick={() => setReferenceTransport(referenceTransport === "asset" ? "url" : "asset")} title="切换参考图片链路">
               {referenceTransport === "asset" ? "Asset" : "URL"}
             </button>
@@ -536,7 +567,7 @@ function App() {
             </button>
           </div>
           {openMenu && (
-            <FloatingMenu kind={openMenu} mode={mode} modelVersion={modelVersion} ratio={ratio} duration={duration} resolution={resolution} availableResolutions={availableResolutions} onMode={switchMode} onModel={chooseModel} onRatio={setRatio} onDuration={setDuration} onResolution={setResolution} onClose={() => setOpenMenu(null)} />
+            <FloatingMenu kind={openMenu.kind} anchorX={openMenu.x} mode={mode} modelVersion={modelVersion} ratio={ratio} duration={duration} resolution={resolution} availableResolutions={availableResolutions} onMode={switchMode} onModel={chooseModel} onRatio={setRatio} onDuration={setDuration} onResolution={setResolution} onClose={() => setOpenMenu(null)} />
           )}
         </div>
       </section>}
@@ -554,6 +585,45 @@ interface ComposerPayload {
   duration: number;
   resolution: VideoResolution;
   references: VideoReference[];
+}
+
+function TopFilters({ open, timeFilter, modeFilter, statusFilter, onOpen, onTime, onMode, onStatus }: {
+  open: TopFilterKind | null;
+  timeFilter: TimeFilter;
+  modeFilter: ModeFilter;
+  statusFilter: StatusFilter;
+  onOpen: (kind: TopFilterKind | null) => void;
+  onTime: (value: TimeFilter) => void;
+  onMode: (value: ModeFilter) => void;
+  onStatus: (value: StatusFilter) => void;
+}) {
+  return (
+    <div className="search-pill">
+      <button title="筛选"><Search size={17} /></button>
+      <TopFilterButton active={open === "time"} label={timeFilterLabel(timeFilter)} onClick={() => onOpen(open === "time" ? null : "time")} />
+      <TopFilterButton active={open === "mode"} label={modeFilterLabel(modeFilter)} onClick={() => onOpen(open === "mode" ? null : "mode")} />
+      <TopFilterButton active={open === "status"} label={statusFilterLabel(statusFilter)} onClick={() => onOpen(open === "status" ? null : "status")} />
+      {open === "time" && (
+        <div className="top-filter-menu time-filter-menu">
+          {(["all", "today", "week"] as TimeFilter[]).map((item) => <button key={item} className={timeFilter === item ? "selected" : ""} onClick={() => { onTime(item); onOpen(null); }}>{timeFilterLabel(item)}</button>)}
+        </div>
+      )}
+      {open === "mode" && (
+        <div className="top-filter-menu mode-filter-menu">
+          {(["all", "multimodal", "frames"] as ModeFilter[]).map((item) => <button key={item} className={modeFilter === item ? "selected" : ""} onClick={() => { onMode(item); onOpen(null); }}>{modeFilterLabel(item)}</button>)}
+        </div>
+      )}
+      {open === "status" && (
+        <div className="top-filter-menu status-filter-menu">
+          {(["all", "queued", "running", "succeeded", "failed"] as StatusFilter[]).map((item) => <button key={item} className={statusFilter === item ? "selected" : ""} onClick={() => { onStatus(item); onOpen(null); }}>{statusFilterLabel(item)}</button>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopFilterButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return <button className={active ? "active" : ""} onClick={onClick}>{label}<ChevronDown size={14} /></button>;
 }
 
 function ConversationRail({ projects, selectedProjectId, view, onView, onCreateProject, onRenameProject, onSelectProject }: {
@@ -658,6 +728,37 @@ function sortTasksForBottomStack(tasks: VideoTask[]) {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+function filterTasks(tasks: VideoTask[], filters: { timeFilter: TimeFilter; modeFilter: ModeFilter; statusFilter: StatusFilter }) {
+  const now = Date.now();
+  return tasks.filter((task) => {
+    if (filters.modeFilter !== "all" && task.mode !== filters.modeFilter) return false;
+    if (filters.statusFilter !== "all" && task.status !== filters.statusFilter) return false;
+    if (filters.timeFilter === "today") return new Date(task.createdAt).toDateString() === new Date(now).toDateString();
+    if (filters.timeFilter === "week") return now - new Date(task.createdAt).getTime() <= 7 * 24 * 60 * 60 * 1000;
+    return true;
+  });
+}
+
+function timeFilterLabel(value: TimeFilter) {
+  if (value === "today") return "今天";
+  if (value === "week") return "近7天";
+  return "时间";
+}
+
+function modeFilterLabel(value: ModeFilter) {
+  if (value === "multimodal") return "全能参考";
+  if (value === "frames") return "首尾帧";
+  return "生成模式";
+}
+
+function statusFilterLabel(value: StatusFilter) {
+  if (value === "queued") return "排队中";
+  if (value === "running") return "运行中";
+  if (value === "succeeded") return "成功";
+  if (value === "failed") return "失败";
+  return "操作类型";
+}
+
 function scrollTimelineToBottom(behavior: ScrollBehavior = "auto") {
   window.scrollTo({ top: document.documentElement.scrollHeight, behavior });
 }
@@ -750,12 +851,13 @@ function UploadSlot({ slot, onUpload, onClear, onInsertReference }: { slot: Refe
   );
 }
 
-function MenuButton({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+function MenuButton({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: (event: React.MouseEvent<HTMLButtonElement>) => void }) {
   return <button className={`menu-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span><ChevronDown size={16} /></button>;
 }
 
-function FloatingMenu({ kind, mode, modelVersion, ratio, duration, resolution, availableResolutions, onMode, onModel, onRatio, onDuration, onResolution, onClose }: {
-  kind: "mode" | "model" | "ratio" | "duration" | "resolution";
+function FloatingMenu({ kind, anchorX, mode, modelVersion, ratio, duration, resolution, availableResolutions, onMode, onModel, onRatio, onDuration, onResolution, onClose }: {
+  kind: MenuKind;
+  anchorX: number;
   mode: VideoMode;
   modelVersion: VideoModelVersion;
   ratio: VideoRatio;
@@ -769,22 +871,23 @@ function FloatingMenu({ kind, mode, modelVersion, ratio, duration, resolution, a
   onResolution: (value: VideoResolution) => void;
   onClose: () => void;
 }) {
+  const style = { "--menu-anchor-x": `${Math.round(anchorX)}px` } as React.CSSProperties;
   if (kind === "ratio") {
-    return <div className="floating-menu ratio-menu"><p>选择比例</p>{ratioOptions.map((item) => <button key={item} className={ratio === item ? "selected" : ""} onClick={() => { onRatio(item); onClose(); }}><RatioIcon ratio={item} />{item}</button>)}</div>;
+    return <div className="floating-menu ratio-menu" style={style}><p>选择比例</p>{ratioOptions.map((item) => <button key={item} className={ratio === item ? "selected" : ""} onClick={() => { onRatio(item); onClose(); }}><RatioIcon ratio={item} />{item}</button>)}</div>;
   }
   if (kind === "duration") {
-    return <div className="floating-menu duration-menu"><p>选择视频生成时长</p>{durationOptions.map((item) => <button key={item} className={duration === item ? "selected" : ""} onClick={() => { onDuration(item); onClose(); }}><Clock3 size={18} />{item}s{duration === item && <Check className="option-check" size={18} />}</button>)}</div>;
+    return <div className="floating-menu duration-menu" style={style}><p>选择视频生成时长</p>{durationOptions.map((item) => <button key={item} className={duration === item ? "selected" : ""} onClick={() => { onDuration(item); onClose(); }}><Clock3 size={18} />{item}s{duration === item && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "resolution") {
-    return <div className="floating-menu resolution-menu"><p>选择清晰度</p>{resolutionOptions.map((item) => {
+    return <div className="floating-menu resolution-menu" style={style}><p>选择清晰度</p>{resolutionOptions.map((item) => {
       const disabled = !availableResolutions.includes(item);
       return <button key={item} disabled={disabled} className={resolution === item ? "selected" : ""} title={disabled ? "Seedance 2.0 Fast 不支持 1080p" : undefined} onClick={() => { if (disabled) return; onResolution(item); onClose(); }}><Gauge size={18} />{item}{resolution === item && <Check className="option-check" size={18} />}</button>;
     })}</div>;
   }
   if (kind === "model") {
-    return <div className="floating-menu model-menu"><p>选择模型</p>{modelOptions.map((item) => <button key={item.value} className={modelVersion === item.value ? "selected" : ""} onClick={() => { onModel(item.value); onClose(); }}><Film size={18} />{item.label}{modelVersion === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+    return <div className="floating-menu model-menu" style={style}><p>选择模型</p>{modelOptions.map((item) => <button key={item.value} className={modelVersion === item.value ? "selected" : ""} onClick={() => { onModel(item.value); onClose(); }}><Film size={18} />{item.label}{modelVersion === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
   }
-  return <div className="floating-menu mode-menu"><p>选择生成模式</p>{(["multimodal", "frames"] as VideoMode[]).map((item) => <button key={item} className={mode === item ? "selected" : ""} onClick={() => onMode(item)}><UploadCloud size={18} />{modeLabels[item]}{mode === item && <Check className="option-check" size={18} />}</button>)}</div>;
+  return <div className="floating-menu mode-menu" style={style}><p>选择生成模式</p>{(["multimodal", "frames"] as VideoMode[]).map((item) => <button key={item} className={mode === item ? "selected" : ""} onClick={() => onMode(item)}><UploadCloud size={18} />{modeLabels[item]}{mode === item && <Check className="option-check" size={18} />}</button>)}</div>;
 }
 
 function RatioIcon({ ratio }: { ratio: string }) {

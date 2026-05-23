@@ -52,6 +52,7 @@ button:disabled {
 }
 
 .search-pill {
+  position: relative;
   display: flex;
   align-items: center;
   height: 42px;
@@ -75,12 +76,46 @@ button:disabled {
   font-weight: 650;
 }
 
+.search-pill button.active {
+  color: #ffffff;
+}
+
 .search-pill button:first-child {
   padding-left: 8px;
 }
 
 .search-pill button:last-child {
   border-right: 0;
+}
+
+.top-filter-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  z-index: 80;
+  display: grid;
+  gap: 6px;
+  min-width: 142px;
+  padding: 10px;
+  border: 1px solid #303541;
+  border-radius: 12px;
+  background: #1a1d24;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+}
+
+.time-filter-menu { left: 38px; }
+.mode-filter-menu { left: 120px; }
+.status-filter-menu { right: 0; }
+
+.top-filter-menu button {
+  height: 34px;
+  justify-content: flex-start;
+  border-right: 0;
+  border-radius: 8px;
+}
+
+.top-filter-menu button.selected {
+  background: #303541;
+  color: #ffffff;
 }
 
 .timeline {
@@ -562,7 +597,7 @@ button:disabled {
 
 .floating-menu {
   position: absolute;
-  left: 18px;
+  left: clamp(18px, calc(var(--menu-anchor-x, 160px) - var(--menu-width, 280px) / 2), calc(100% - var(--menu-width, 280px) - 18px));
   bottom: 76px;
   z-index: 60;
   display: grid;
@@ -577,12 +612,8 @@ button:disabled {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
 }
 
-.mode-menu {
-  left: 18px;
-}
-
 .model-menu {
-  left: 230px;
+  --menu-width: 320px;
   min-width: 320px;
 }
 
@@ -821,7 +852,7 @@ button:disabled {
 }
 
 .ratio-menu {
-  left: 690px;
+  --menu-width: 620px;
   grid-template-columns: repeat(6, 84px);
   width: auto;
   max-width: min(620px, calc(100vw - 80px));
@@ -834,17 +865,18 @@ button:disabled {
 .ratio-menu button {
   height: 96px;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   gap: 10px;
+  text-align: center;
 }
 
 .duration-menu {
-  left: 860px;
+  --menu-width: 280px;
 }
 
 .resolution-menu {
-  left: 1010px;
+  --menu-width: 220px;
   min-width: 220px;
 }
 
@@ -1378,6 +1410,13 @@ button:disabled {
     width: 100%;
     justify-content: space-between;
     font-size: 13px;
+  }
+
+  .time-filter-menu,
+  .mode-filter-menu,
+  .status-filter-menu {
+    left: 8px;
+    right: 8px;
   }
 
   .timeline {
