@@ -16,6 +16,8 @@ import { summarizeLocalUsage } from "./lib/usageStats.js";
 import { emptyOfficialUsage, InferenceUsageClient } from "./lib/inferenceUsageClient.js";
 import { fileFromLocalUpload, resolveLocalUploadPath, saveUploadedImageLocally } from "./lib/localUploadStore.js";
 import { buildTaskDebugExport } from "./lib/taskDebugExport.js";
+import { errorMessage, retryOperation } from "./lib/retry.js";
+import type { TaskRunContext } from "./lib/taskRunner.js";
 import type { RuntimeSettings } from "./types.js";
 
 const config = loadConfig();
@@ -27,7 +29,7 @@ await mkdir(config.uploadDir, { recursive: true });
 const assetsClient = new AssetsClient(config, () => getRuntimeSettings(db, config));
 const videoClient = new VideoClient(config, () => getRuntimeSettings(db, config));
 const inferenceUsageClient = new InferenceUsageClient();
-const runner = new SerialTaskRunner(db, videoClient, config);
+const runner = new SerialTaskRunner(db, videoClient, config, () => getRuntimeSettings(db, config));
 const app = express();
 const managerToken = "sts-manager-session";
 
@@ -144,7 +146,9 @@ app.post("/api/uploads/image", asyncHandler(async (req, res) => {
   if (!file.type.startsWith("image/")) return res.status(400).json({ error: "只支持上传图片文件。" });
   const settings = await getRuntimeSettings(db, config);
   const local = await saveUploadedImageLocally(file, settings.uploadDir || config.uploadDir);
-  const uploaded = await uploadImageToTemporaryHost(file, settings.imageHostURL);
+  const uploaded = await uploadImageToTemporaryHost(file, settings.imageHostURL, fetch, {
+    maxRetries: retryCountFromSettings(settings)
+  });
   res.json({ ...uploaded, localPath: local.path, localUrl: local.url });
 }));
 
@@ -194,11 +198,11 @@ app.post("/api/sync/assets", asyncHandler(async (req, res) => {
 app.post("/api/video-tasks", asyncHandler(async (req, res) => {
   const input = parseVideoTaskRequest(req.body);
   const task = await createVideoTask(db, input, input.references.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
-  runner.enqueue(task.id, async () => {
+  runner.enqueue(task.id, async (context) => {
     const settings = await getRuntimeSettings(db, config);
-    const refreshedInputReferences = await refreshTemporaryReferences(input.references, settings);
+    const refreshedInputReferences = await refreshTemporaryReferences(input.references, settings, context);
     const references = input.referenceTransport === "asset"
-      ? await prepareAssetReferences(refreshedInputReferences, settings)
+      ? await prepareAssetReferences(refreshedInputReferences, settings, context)
       : refreshedInputReferences;
     return videoClient.createTask({
       modelVersion: input.modelVersion,
@@ -293,20 +297,21 @@ const runtimeSettingsSchema = z.object({
   volcengineSK: z.string().trim(),
   volcengineRegion: z.string().trim().min(1),
   volcengineService: z.string().trim().min(1),
-  arkAPIKey: z.string().trim().min(1),
+  arkAPIKey: z.string().trim(),
   arkVideoModel: z.string().trim().min(1),
   arkBaseURL: z.string().trim().url(),
   imageHostURL: z.string().trim().url(),
   assetProjectName: z.string().trim(),
   pollIntervalSeconds: z.string().trim().min(1),
-  pollTimeoutSeconds: z.string().trim().min(1)
+  pollTimeoutSeconds: z.string().trim().min(1),
+  maxPollRetryCount: z.string().trim().min(1)
 });
 
 function isManagerRequest(req: express.Request) {
   return req.headers["x-sts-manager-token"] === managerToken;
 }
 
-async function prepareAssetReferences(references: VideoReferenceInput[], settings: RuntimeSettings) {
+async function prepareAssetReferences(references: VideoReferenceInput[], settings: RuntimeSettings, context?: TaskRunContext) {
   const prepared: VideoReferenceInput[] = [];
   for (const [index, reference] of references.entries()) {
     if (reference.assetId) {
@@ -319,16 +324,21 @@ async function prepareAssetReferences(references: VideoReferenceInput[], setting
     if (!reference.sourceUrl) throw new Error("参考图片缺少公网 URL。");
     const validation = validatePublicAssetUrl(reference.sourceUrl);
     if (!validation.ok) throw new Error(validation.message);
-    const group = await ensureDefaultAssetGroup(settings);
-    const asset = await assetsClient.createAsset({
-      groupId: group.id,
-      url: reference.sourceUrl,
-      name: reference.label || `reference-${index + 1}`,
-      assetType: reference.assetType,
-      projectName: group.projectName
-    });
+    const group = await ensureDefaultAssetGroup(settings, context);
+    const asset = await retryWithTaskLog(
+      () => assetsClient.createAsset({
+        groupId: group.id,
+        url: reference.sourceUrl!,
+        name: reference.label || `reference-${index + 1}`,
+        assetType: reference.assetType,
+        projectName: group.projectName
+      }),
+      settings,
+      context,
+      "Asset 创建失败"
+    );
     await upsertAsset(db, asset);
-    const activeAsset = await waitForAssetActive(asset.id, asset.projectName);
+    const activeAsset = await waitForAssetActive(asset.id, asset.projectName, settings, context);
     prepared.push({
       ...reference,
       assetId: activeAsset.id,
@@ -338,20 +348,25 @@ async function prepareAssetReferences(references: VideoReferenceInput[], setting
   return prepared;
 }
 
-async function ensureDefaultAssetGroup(settings: RuntimeSettings) {
+async function ensureDefaultAssetGroup(settings: RuntimeSettings, context?: TaskRunContext) {
   const expectedProjectName = settings.assetProjectName || "";
   const existing = db.data.assetGroups.find((group) => group.projectName === expectedProjectName);
   if (existing) return existing;
-  const group = await assetsClient.createAssetGroup({
-    name: "seendance-reference-assets",
-    description: "SeeDance UI uploaded reference assets",
-    projectName: settings.assetProjectName || undefined
-  });
+  const group = await retryWithTaskLog(
+    () => assetsClient.createAssetGroup({
+      name: "seendance-reference-assets",
+      description: "SeeDance UI uploaded reference assets",
+      projectName: settings.assetProjectName || undefined
+    }),
+    settings,
+    context,
+    "Asset 分组创建失败"
+  );
   await upsertAssetGroup(db, group);
   return group;
 }
 
-async function refreshTemporaryReferences(references: VideoReferenceInput[], settings: RuntimeSettings) {
+async function refreshTemporaryReferences(references: VideoReferenceInput[], settings: RuntimeSettings, context?: TaskRunContext) {
   const refreshed: VideoReferenceInput[] = [];
   for (const reference of references) {
     if (!reference.localPath) {
@@ -359,7 +374,12 @@ async function refreshTemporaryReferences(references: VideoReferenceInput[], set
       continue;
     }
     const file = await fileFromLocalUpload(reference.localPath, reference.label || "reference.png");
-    const uploaded = await uploadImageToTemporaryHost(file, settings.imageHostURL);
+    const uploaded = await uploadImageToTemporaryHost(file, settings.imageHostURL, fetch, {
+      maxRetries: retryCountFromSettings(settings),
+      onRetry: async ({ attempt, maxRetries, message }) => {
+        await context?.logRetry("参考图片重新上传失败", attempt, maxRetries, message);
+      }
+    });
     refreshed.push({
       ...reference,
       sourceUrl: uploaded.url,
@@ -369,16 +389,41 @@ async function refreshTemporaryReferences(references: VideoReferenceInput[], set
   return refreshed;
 }
 
-async function waitForAssetActive(id: string, projectName: string) {
+async function waitForAssetActive(id: string, projectName: string, settings: RuntimeSettings, context?: TaskRunContext) {
   const started = Date.now();
   while (Date.now() - started < config.pollTimeoutMs) {
     await sleep(config.pollIntervalMs);
-    const asset = await assetsClient.getAsset(id, projectName);
+    const asset = await retryWithTaskLog(
+      () => assetsClient.getAsset(id, projectName),
+      settings,
+      context,
+      "Asset 状态轮询失败"
+    );
     await upsertAsset(db, asset);
     if (asset.status === "Active") return asset;
     if (asset.status === "Failed") throw new Error(asset.errorMessage || "素材预处理失败。");
   }
   throw new Error("素材预处理轮询超时。");
+}
+
+async function retryWithTaskLog<T>(
+  operation: () => Promise<T>,
+  settings: RuntimeSettings,
+  context: TaskRunContext | undefined,
+  label: string
+) {
+  return retryOperation(operation, {
+    maxRetries: retryCountFromSettings(settings),
+    delayMs: config.pollIntervalMs,
+    onRetry: async ({ attempt, maxRetries, message }) => {
+      await context?.logRetry(label, attempt, maxRetries, message);
+    }
+  });
+}
+
+function retryCountFromSettings(settings: RuntimeSettings) {
+  const value = Number(settings.maxPollRetryCount);
+  return Number.isInteger(value) && value >= 0 ? value : config.maxPollRetryCount;
 }
 
 async function fileFromMultipartRequest(req: express.Request) {

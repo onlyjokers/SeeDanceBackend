@@ -1,5 +1,6 @@
 import type { AppConfig } from "./config.js";
 import { buildCreateAssetGroupPayload, buildCreateAssetPayload, type AssetType } from "./payloads.js";
+import { retryOperation, type RetryOptions } from "./retry.js";
 import { signVolcengineRequest } from "./volcengineSigner.js";
 import type { Asset, AssetGroup, RuntimeSettings } from "../types.js";
 
@@ -14,7 +15,8 @@ type RuntimeSettingsProvider = () => RuntimeSettings | Promise<RuntimeSettings>;
 export class AssetsClient {
   constructor(
     private readonly config: AppConfig,
-    private readonly runtimeSettings?: RuntimeSettingsProvider
+    private readonly runtimeSettings?: RuntimeSettingsProvider,
+    private readonly retryOptions?: RetryOptions
   ) {}
 
   async isConfigured() {
@@ -137,24 +139,27 @@ export class AssetsClient {
       accessKey: settings.volcengineAK,
       secretKey: settings.volcengineSK
     });
-    const response = await fetch(`${endpoint}/?${query}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Host: "open.volcengineapi.com",
-        "X-Date": signature.amzDate,
-        "X-Content-Sha256": signature.contentHash,
-        Authorization: signature.authorization
-      },
-      body
-    });
-    const text = await response.text();
-    const decoded = text ? JSON.parse(text) : {};
-    if (!response.ok || decoded.ResponseMetadata?.Error) {
-      const message = decoded.ResponseMetadata?.Error?.Message || text || response.statusText;
-      throw new Error(`${action} 调用失败：${message}`);
-    }
-    return decoded;
+    const run = async () => {
+      const response = await fetch(`${endpoint}/?${query}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Host: "open.volcengineapi.com",
+          "X-Date": signature.amzDate,
+          "X-Content-Sha256": signature.contentHash,
+          Authorization: signature.authorization
+        },
+        body
+      });
+      const text = await response.text();
+      const decoded = text ? JSON.parse(text) : {};
+      if (!response.ok || decoded.ResponseMetadata?.Error) {
+        const message = decoded.ResponseMetadata?.Error?.Message || text || response.statusText;
+        throw new Error(`${action} 调用失败：${message}`);
+      }
+      return decoded;
+    };
+    return this.retryOptions ? retryOperation(run, this.retryOptions) : run();
   }
 
   private async settings(): Promise<RuntimeSettings> {
@@ -174,7 +179,8 @@ export class AssetsClient {
       imageHostURL: this.config.imageHostURL,
       assetProjectName: this.config.assetProjectName,
       pollIntervalSeconds: String(this.config.pollIntervalMs / 1000),
-      pollTimeoutSeconds: String(this.config.pollTimeoutMs / 1000)
+      pollTimeoutSeconds: String(this.config.pollTimeoutMs / 1000),
+      maxPollRetryCount: String(this.config.maxPollRetryCount)
     };
   }
 }

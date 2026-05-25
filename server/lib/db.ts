@@ -30,7 +30,8 @@ export const defaultRuntimeSettings: RuntimeSettings = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "",
   pollIntervalSeconds: "5",
-  pollTimeoutSeconds: "3600"
+  pollTimeoutSeconds: "3600",
+  maxPollRetryCount: "5"
 };
 
 export type AppDB = Awaited<ReturnType<typeof openDB>>;

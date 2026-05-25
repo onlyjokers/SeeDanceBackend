@@ -16,6 +16,7 @@ export interface AppConfig {
   assetProjectName: string;
   pollIntervalMs: number;
   pollTimeoutMs: number;
+  maxPollRetryCount: number;
   uploadDir: string;
 }
 
@@ -36,6 +37,7 @@ export function loadConfig(): AppConfig {
     assetProjectName: process.env.ASSET_PROJECT_NAME || "",
     pollIntervalMs: numberEnv("POLL_INTERVAL_SECONDS", 5) * 1000,
     pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 3600) * 1000,
+    maxPollRetryCount: integerEnv("MAX_POLL_RETRY_COUNT", 5),
     uploadDir: process.env.UPLOAD_DIR || "data/uploads"
   };
 }
@@ -52,6 +54,7 @@ export function publicConfig(config: AppConfig) {
     volcengineService: config.volcengineService,
     pollIntervalSeconds: config.pollIntervalMs / 1000,
     pollTimeoutSeconds: config.pollTimeoutMs / 1000,
+    maxPollRetryCount: config.maxPollRetryCount,
     uploadDir: config.uploadDir
   };
 }
@@ -61,4 +64,11 @@ function numberEnv(name: string, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function integerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
 }

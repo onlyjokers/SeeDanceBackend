@@ -21,7 +21,8 @@ const config: AppConfig = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "QiShiYi",
   pollIntervalMs: 5000,
-  pollTimeoutMs: 3600000
+  pollTimeoutMs: 3600000,
+  maxPollRetryCount: 5
 };
 
 describe("expanded runtime settings", () => {
@@ -45,7 +46,8 @@ describe("expanded runtime settings", () => {
       imageHostURL: "https://uguu.se/upload.php",
       assetProjectName: "QiShiYi",
       pollIntervalSeconds: "5",
-      pollTimeoutSeconds: "3600"
+      pollTimeoutSeconds: "3600",
+      maxPollRetryCount: "5"
     });
   });
 
@@ -58,7 +60,8 @@ describe("expanded runtime settings", () => {
       volcengineSK: "sk-next",
       assetProjectName: "NextProject",
       pollIntervalSeconds: "10",
-      pollTimeoutSeconds: "1200"
+      pollTimeoutSeconds: "1200",
+      maxPollRetryCount: "7"
     });
 
     await expect(getRuntimeSettings(db, config)).resolves.toMatchObject({
@@ -66,7 +69,8 @@ describe("expanded runtime settings", () => {
       volcengineSK: "sk-next",
       assetProjectName: "NextProject",
       pollIntervalSeconds: "10",
-      pollTimeoutSeconds: "1200"
+      pollTimeoutSeconds: "1200",
+      maxPollRetryCount: "7"
     });
   });
 
@@ -123,6 +127,7 @@ function awaitableRuntimeSettingsFallback() {
     imageHostURL: "https://uguu.se/upload.php",
     assetProjectName: "QiShiYi",
     pollIntervalSeconds: "5",
-    pollTimeoutSeconds: "3600"
+    pollTimeoutSeconds: "3600",
+    maxPollRetryCount: "5"
   };
 }

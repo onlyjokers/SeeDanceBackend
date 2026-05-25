@@ -88,6 +88,7 @@ export interface RuntimeSettings {
   assetProjectName: string;
   pollIntervalSeconds: string;
   pollTimeoutSeconds: string;
+  maxPollRetryCount: string;
 }
 
 export interface DatabaseShape {

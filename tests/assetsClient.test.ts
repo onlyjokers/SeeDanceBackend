@@ -26,7 +26,8 @@ const config: AppConfig = {
   imageHostURL: "https://uguu.se/upload.php",
   assetProjectName: "",
   pollIntervalMs: 1000,
-  pollTimeoutMs: 10000
+  pollTimeoutMs: 10000,
+  maxPollRetryCount: 5
 };
 
 describe("AssetsClient ProjectName handling", () => {
@@ -89,5 +90,25 @@ describe("AssetsClient ProjectName handling", () => {
 
     expect(group.projectName).toBe("");
     expect(asset.projectName).toBe("");
+  });
+
+  it("retries transient Volcengine request failures with the configured retry count", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("fetch failed"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ Result: { Id: "Asset-1", Status: "Active" } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const retries: string[] = [];
+    const client = new AssetsClient(config, undefined, {
+      maxRetries: 1,
+      onRetry: ({ message }) => {
+        retries.push(message);
+      }
+    });
+
+    const asset = await client.getAsset("Asset-1");
+
+    expect(asset.id).toBe("Asset-1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(retries).toEqual(["fetch failed"]);
   });
 });

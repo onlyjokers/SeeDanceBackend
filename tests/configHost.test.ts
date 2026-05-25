@@ -5,6 +5,7 @@ describe("server host binding", () => {
   const originalAssetProjectName = process.env.ASSET_PROJECT_NAME;
   const originalVolcengineService = process.env.VOLCENGINE_SERVICE;
   const originalPollTimeoutSeconds = process.env.POLL_TIMEOUT_SECONDS;
+  const originalMaxPollRetryCount = process.env.MAX_POLL_RETRY_COUNT;
 
   afterEach(() => {
     if (originalAssetProjectName === undefined) delete process.env.ASSET_PROJECT_NAME;
@@ -13,6 +14,8 @@ describe("server host binding", () => {
     else process.env.VOLCENGINE_SERVICE = originalVolcengineService;
     if (originalPollTimeoutSeconds === undefined) delete process.env.POLL_TIMEOUT_SECONDS;
     else process.env.POLL_TIMEOUT_SECONDS = originalPollTimeoutSeconds;
+    if (originalMaxPollRetryCount === undefined) delete process.env.MAX_POLL_RETRY_COUNT;
+    else process.env.MAX_POLL_RETRY_COUNT = originalMaxPollRetryCount;
   });
 
   it("defaults to 0.0.0.0 so the app can be reached from the LAN", () => {
@@ -59,5 +62,21 @@ describe("server host binding", () => {
     const config = loadConfig();
 
     expect(config.pollTimeoutMs).toBe(3600 * 1000);
+  });
+
+  it("defaults video polling retries to five transient failures", () => {
+    delete process.env.MAX_POLL_RETRY_COUNT;
+
+    const config = loadConfig();
+
+    expect(config.maxPollRetryCount).toBe(5);
+  });
+
+  it("allows video polling retries to be configured explicitly", () => {
+    process.env.MAX_POLL_RETRY_COUNT = "8";
+
+    const config = loadConfig();
+
+    expect(config.maxPollRetryCount).toBe(8);
   });
 });

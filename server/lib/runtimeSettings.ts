@@ -18,7 +18,8 @@ export function runtimeSettingsFromConfig(config: AppConfig): RuntimeSettings {
     imageHostURL: config.imageHostURL,
     assetProjectName: config.assetProjectName,
     pollIntervalSeconds: String(config.pollIntervalMs / 1000),
-    pollTimeoutSeconds: String(config.pollTimeoutMs / 1000)
+    pollTimeoutSeconds: String(config.pollTimeoutMs / 1000),
+    maxPollRetryCount: String(config.maxPollRetryCount)
   };
 }
 

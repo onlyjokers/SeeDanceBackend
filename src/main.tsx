@@ -61,6 +61,7 @@ interface PublicConfig {
   assetProjectNameConfigured: boolean;
   pollIntervalSeconds: number;
   pollTimeoutSeconds: number;
+  maxPollRetryCount: number;
   uploadDir: string;
 }
 
@@ -81,6 +82,7 @@ interface RuntimeSettings {
   assetProjectName: string;
   pollIntervalSeconds: string;
   pollTimeoutSeconds: string;
+  maxPollRetryCount: string;
 }
 
 interface AssetGroup {
@@ -264,9 +266,14 @@ function App() {
   const availableResolutions = useMemo(() => allowedResolutions(modelVersion), [modelVersion]);
 
   async function refresh() {
-    const [configResponse, stateResponse] = await Promise.all([fetch("/api/config"), fetch("/api/state")]);
-    setConfig(await configResponse.json());
-    setState(await stateResponse.json());
+    try {
+      const [configResponse, stateResponse] = await Promise.all([fetch("/api/config"), fetch("/api/state")]);
+      if (!configResponse.ok || !stateResponse.ok) return;
+      setConfig(await configResponse.json());
+      setState(await stateResponse.json());
+    } catch {
+      // Ignore transient refresh failures; explicit actions still surface errors.
+    }
   }
 
   useEffect(() => {
@@ -990,14 +997,19 @@ function ManagerApp() {
   const [message, setMessage] = useState("");
 
   async function refreshManager() {
-    const [settingsResponse, stateResponse, localUsageResponse] = await Promise.all([
-      fetch("/api/runtime-settings", { headers: { "x-sts-manager-token": managerToken } }),
-      fetch("/api/state"),
-      fetch("/api/manager/usage/local", { headers: { "x-sts-manager-token": managerToken } })
-    ]);
-    setSettings(await settingsResponse.json());
-    setState(await stateResponse.json());
-    setLocalUsage(await localUsageResponse.json());
+    try {
+      const [settingsResponse, stateResponse, localUsageResponse] = await Promise.all([
+        fetch("/api/runtime-settings", { headers: { "x-sts-manager-token": managerToken } }),
+        fetch("/api/state"),
+        fetch("/api/manager/usage/local", { headers: { "x-sts-manager-token": managerToken } })
+      ]);
+      if (!settingsResponse.ok || !stateResponse.ok || !localUsageResponse.ok) return;
+      setSettings(await settingsResponse.json());
+      setState(await stateResponse.json());
+      setLocalUsage(await localUsageResponse.json());
+    } catch {
+      // Keep the last manager snapshot visible during short network/server hiccups.
+    }
   }
 
   async function refreshOfficialUsage() {
@@ -1181,6 +1193,7 @@ function ManagerApp() {
                   <SettingField label="IMAGE_HOST_URL" value={settings.imageHostURL} onChange={(value) => setSettings({ ...settings, imageHostURL: value })} />
                   <SettingField label="POLL_INTERVAL_SECONDS" value={settings.pollIntervalSeconds} onChange={(value) => setSettings({ ...settings, pollIntervalSeconds: value })} />
                   <SettingField label="POLL_TIMEOUT_SECONDS" value={settings.pollTimeoutSeconds} onChange={(value) => setSettings({ ...settings, pollTimeoutSeconds: value })} />
+                  <SettingField label="MAX_POLL_RETRY_COUNT" value={settings.maxPollRetryCount} onChange={(value) => setSettings({ ...settings, maxPollRetryCount: value })} />
                 </SettingsGroup>
               </div>
             )}

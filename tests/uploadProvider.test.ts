@@ -38,4 +38,33 @@ describe("temporary image upload provider", () => {
       fetchMock as unknown as typeof fetch
     )).rejects.toThrow("图床没有返回可用的 HTTPS 图片 URL");
   });
+
+  it("retries transient upload failures with the configured retry count", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("fetch failed"))
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({
+          success: true,
+          files: [{ url: "https://n.uguu.se/retried.png" }]
+        })
+      });
+    const retries: string[] = [];
+
+    const result = await uploadImageToTemporaryHost(
+      new File([new Uint8Array([1])], "reference.png", { type: "image/png" }),
+      "https://uguu.se/upload.php",
+      fetchMock as unknown as typeof fetch,
+      {
+        maxRetries: 1,
+        onRetry: ({ message }) => {
+          retries.push(message);
+        }
+      }
+    );
+
+    expect(result.url).toBe("https://n.uguu.se/retried.png");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(retries).toEqual(["fetch failed"]);
+  });
 });
