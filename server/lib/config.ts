@@ -1,9 +1,11 @@
 import "dotenv/config";
+import { dirname, extname, join, basename } from "node:path";
 
 export interface AppConfig {
   port: number;
   host: string;
   databasePath: string;
+  sqlitePath: string;
   downloadDir: string;
   volcengineAK: string;
   volcengineSK: string;
@@ -25,6 +27,7 @@ export function loadConfig(): AppConfig {
     port: numberEnv("PORT", 8787),
     host: process.env.HOST || "0.0.0.0",
     databasePath: process.env.DATABASE_PATH || "data/seendance.json",
+    sqlitePath: process.env.SQLITE_PATH || sqlitePathFromJsonPath(process.env.DATABASE_PATH || "data/seendance.json"),
     downloadDir: process.env.DOWNLOAD_DIR || "data/downloads",
     volcengineAK: process.env.VOLCENGINE_AK || "",
     volcengineSK: process.env.VOLCENGINE_SK || "",
@@ -55,7 +58,8 @@ export function publicConfig(config: AppConfig) {
     pollIntervalSeconds: config.pollIntervalMs / 1000,
     pollTimeoutSeconds: config.pollTimeoutMs / 1000,
     maxPollRetryCount: config.maxPollRetryCount,
-    uploadDir: config.uploadDir
+    uploadDir: config.uploadDir,
+    sqlitePath: config.sqlitePath
   };
 }
 
@@ -71,4 +75,10 @@ function integerEnv(name: string, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
+function sqlitePathFromJsonPath(path: string) {
+  const ext = extname(path);
+  const name = ext ? basename(path, ext) : basename(path);
+  return join(dirname(path), `${name}.sqlite`);
 }

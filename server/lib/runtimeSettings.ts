@@ -6,6 +6,7 @@ export function runtimeSettingsFromConfig(config: AppConfig): RuntimeSettings {
     port: String(config.port),
     host: config.host,
     databasePath: config.databasePath,
+    sqlitePath: config.sqlitePath,
     downloadDir: config.downloadDir,
     uploadDir: config.uploadDir,
     volcengineAK: config.volcengineAK,

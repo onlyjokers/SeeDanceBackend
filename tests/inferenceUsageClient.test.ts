@@ -14,6 +14,7 @@ const settings: RuntimeSettings = {
   port: "8787",
   host: "0.0.0.0",
   databasePath: "data/seendance.json",
+  sqlitePath: "data/seendance.sqlite",
   downloadDir: "data/downloads",
   uploadDir: "data/uploads",
   volcengineAK: "ak",

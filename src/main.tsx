@@ -63,12 +63,14 @@ interface PublicConfig {
   pollTimeoutSeconds: number;
   maxPollRetryCount: number;
   uploadDir: string;
+  sqlitePath: string;
 }
 
 interface RuntimeSettings {
   port: string;
   host: string;
   databasePath: string;
+  sqlitePath: string;
   downloadDir: string;
   uploadDir: string;
   volcengineAK: string;
@@ -192,6 +194,33 @@ interface OfficialUsageSummary {
   rows: Array<Record<string, string | number>>;
   dataCount: number;
   error?: string;
+}
+
+interface StorageStats {
+  database: {
+    jsonPath: string;
+    sqlitePath: string;
+    jsonBytes: number;
+    sqliteBytes: number;
+  };
+  files: {
+    downloadDir: string;
+    uploadDir: string;
+    downloadBytes: number;
+    uploadBytes: number;
+    totalBytes: number;
+  };
+  tasks: {
+    total: number;
+    visible: number;
+    hidden: number;
+    succeeded: number;
+    failed: number;
+    running: number;
+    queued: number;
+    generatedVideos: number;
+    downloadedVideos: number;
+  };
 }
 
 interface VideoProject {
@@ -992,21 +1021,24 @@ function ManagerApp() {
   const [state, setState] = useState<AppState>(emptyState);
   const [localUsage, setLocalUsage] = useState<LocalUsageSummary | null>(null);
   const [officialUsage, setOfficialUsage] = useState<OfficialUsageSummary | null>(null);
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [managerView, setManagerView] = useState<"dashboard" | "records">("dashboard");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
   async function refreshManager() {
     try {
-      const [settingsResponse, stateResponse, localUsageResponse] = await Promise.all([
+      const [settingsResponse, stateResponse, localUsageResponse, storageResponse] = await Promise.all([
         fetch("/api/runtime-settings", { headers: { "x-sts-manager-token": managerToken } }),
         fetch("/api/state"),
-        fetch("/api/manager/usage/local", { headers: { "x-sts-manager-token": managerToken } })
+        fetch("/api/manager/usage/local", { headers: { "x-sts-manager-token": managerToken } }),
+        fetch("/api/manager/storage", { headers: { "x-sts-manager-token": managerToken } })
       ]);
-      if (!settingsResponse.ok || !stateResponse.ok || !localUsageResponse.ok) return;
+      if (!settingsResponse.ok || !stateResponse.ok || !localUsageResponse.ok || !storageResponse.ok) return;
       setSettings(await settingsResponse.json());
       setState(await stateResponse.json());
       setLocalUsage(await localUsageResponse.json());
+      setStorageStats(await storageResponse.json());
     } catch {
       // Keep the last manager snapshot visible during short network/server hiccups.
     }
@@ -1176,6 +1208,7 @@ function ManagerApp() {
                   <SettingField label="PORT" value={settings.port} onChange={(value) => setSettings({ ...settings, port: value })} />
                   <SettingField label="HOST" value={settings.host} onChange={(value) => setSettings({ ...settings, host: value })} />
                   <SettingField label="DATABASE_PATH" value={settings.databasePath} onChange={(value) => setSettings({ ...settings, databasePath: value })} />
+                  <SettingField label="SQLITE_PATH" value={settings.sqlitePath} onChange={(value) => setSettings({ ...settings, sqlitePath: value })} />
                   <SettingField label="DOWNLOAD_DIR" value={settings.downloadDir} onChange={(value) => setSettings({ ...settings, downloadDir: value })} />
                   <SettingField label="UPLOAD_DIR" value={settings.uploadDir} onChange={(value) => setSettings({ ...settings, uploadDir: value })} />
                 </SettingsGroup>
@@ -1205,7 +1238,7 @@ function ManagerApp() {
                 {busy === "official-usage" ? <Loader2 className="spin" size={15} /> : <RefreshCcw size={15} />}刷新官方
               </button>
             </h2>
-            <UsagePanel localUsage={localUsage} officialUsage={officialUsage} officialLoading={busy === "official-usage"} />
+            <UsagePanel localUsage={localUsage} officialUsage={officialUsage} storageStats={storageStats} officialLoading={busy === "official-usage"} />
           </section>
         </section> : (
           <ManagerRecords tasks={state.videoTasks} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} onDownloadDebug={downloadTaskDebug} />
@@ -1233,15 +1266,22 @@ function SettingsGroup({ title, children }: { title: string; children: React.Rea
   );
 }
 
-function UsagePanel({ localUsage, officialUsage, officialLoading }: { localUsage: LocalUsageSummary | null; officialUsage: OfficialUsageSummary | null; officialLoading: boolean }) {
+function UsagePanel({ localUsage, officialUsage, storageStats, officialLoading }: { localUsage: LocalUsageSummary | null; officialUsage: OfficialUsageSummary | null; storageStats: StorageStats | null; officialLoading: boolean }) {
   if (!localUsage) return <div className="record-empty">正在读取本地统计</div>;
   return (
     <div className="usage-panel">
-      <p className="usage-note">本地统计记录本系统提交次数；官方统计来自火山 GetInferenceUsage，取最近 7 天可返回的请求、Token 和图片量。</p>
+      <p className="usage-note">本地统计记录本系统提交次数；官方统计来自火山 GetInferenceUsage，存储统计来自本地 SQLite、下载目录和上传目录。</p>
       <div className="usage-metrics">
         <UsageMetric label="本地总请求" value={localUsage.totals.requests} />
         <UsageMetric label="本地成功" value={localUsage.byStatus.succeeded} />
         <UsageMetric label="本地失败" value={localUsage.byStatus.failed} />
+        <UsageMetric label="任务记录" value={storageStats?.tasks.total ?? localUsage.totals.requests} />
+        <UsageMetric label="视频数量" value={storageStats?.tasks.generatedVideos ?? localUsage.totals.downloaded} />
+        <UsageMetric label="本地视频" value={storageStats?.tasks.downloadedVideos ?? localUsage.totals.downloaded} />
+        <UsageMetric label="SQLite" value={formatBytes(storageStats?.database.sqliteBytes ?? 0)} />
+        <UsageMetric label="下载占用" value={formatBytes(storageStats?.files.downloadBytes ?? 0)} />
+        <UsageMetric label="上传占用" value={formatBytes(storageStats?.files.uploadBytes ?? 0)} />
+        <UsageMetric label="总占用" value={formatBytes(storageStats?.files.totalBytes ?? 0)} />
         <UsageMetric label="官方请求" value={officialUsage?.totals.requests ?? 0} />
         <UsageMetric label="官方 Token" value={officialUsage?.totals.totalTokens ?? 0} />
         <UsageMetric label="任务 Token" value={localUsage.totals.totalTokens} />
@@ -1250,12 +1290,30 @@ function UsagePanel({ localUsage, officialUsage, officialLoading }: { localUsage
       {officialLoading && <p className="usage-note">正在刷新官方用量...</p>}
       {officialUsage?.error && <p className="usage-error">{officialUsage.error}</p>}
       <div className="usage-lists">
+        {storageStats && <UsageList title="存储路径" rows={[
+          ["SQLite", storageStats.database.sqlitePath],
+          ["旧 JSON", `${storageStats.database.jsonPath} / ${formatBytes(storageStats.database.jsonBytes)}`],
+          ["下载目录", storageStats.files.downloadDir],
+          ["上传目录", storageStats.files.uploadDir]
+        ]} />}
         <UsageList title="项目请求" rows={localUsage.byProject.slice(0, 5).map((item) => [item.projectName, `${item.requests} 次 / 成功 ${item.succeeded}`])} />
         <UsageList title="模型请求" rows={localUsage.byModel.slice(0, 5).map((item) => [modelLabel(item.modelVersion), `${item.requests} 次`])} />
         <UsageList title="最近日期" rows={localUsage.byDay.slice(-5).reverse().map((item) => [item.day, `${item.requests} 次`])} />
       </div>
     </div>
   );
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }: { tasks: VideoTask[]; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => void; onDownloadDebug: (taskId: string) => void }) {
@@ -1338,10 +1396,10 @@ function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }
   );
 }
 
-function UsageMetric({ label, value }: { label: string; value: number }) {
+function UsageMetric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="usage-metric">
-      <strong>{new Intl.NumberFormat("zh-CN").format(value)}</strong>
+      <strong>{typeof value === "number" ? new Intl.NumberFormat("zh-CN").format(value) : value}</strong>
       <span>{label}</span>
     </div>
   );

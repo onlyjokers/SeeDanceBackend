@@ -75,6 +75,7 @@ export interface RuntimeSettings {
   port: string;
   host: string;
   databasePath: string;
+  sqlitePath: string;
   downloadDir: string;
   uploadDir: string;
   volcengineAK: string;
@@ -89,6 +90,33 @@ export interface RuntimeSettings {
   pollIntervalSeconds: string;
   pollTimeoutSeconds: string;
   maxPollRetryCount: string;
+}
+
+export interface StorageStats {
+  database: {
+    jsonPath: string;
+    sqlitePath: string;
+    jsonBytes: number;
+    sqliteBytes: number;
+  };
+  files: {
+    downloadDir: string;
+    uploadDir: string;
+    downloadBytes: number;
+    uploadBytes: number;
+    totalBytes: number;
+  };
+  tasks: {
+    total: number;
+    visible: number;
+    hidden: number;
+    succeeded: number;
+    failed: number;
+    running: number;
+    queued: number;
+    generatedVideos: number;
+    downloadedVideos: number;
+  };
 }
 
 export interface DatabaseShape {

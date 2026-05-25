@@ -14,6 +14,7 @@ const config: AppConfig = {
   port: 8787,
   host: "0.0.0.0",
   databasePath: "data/test.json",
+  sqlitePath: "data/test.sqlite",
   downloadDir: "data/downloads",
   uploadDir: "data/uploads",
   volcengineAK: "ak",

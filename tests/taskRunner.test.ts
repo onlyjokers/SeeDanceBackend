@@ -13,6 +13,7 @@ const config: AppConfig = {
   port: 8787,
   host: "0.0.0.0",
   databasePath: "data/seendance.json",
+  sqlitePath: "data/seendance.sqlite",
   downloadDir: "data/downloads",
   uploadDir: "data/uploads",
   volcengineAK: "",
@@ -139,7 +140,7 @@ describe("SerialTaskRunner", () => {
       raw: { id: "remote-1" }
     }));
 
-    const completed = await waitForTaskStatus(db, task.id);
+    const completed = await waitForTask(db, task.id, (item) => item.errorMessage?.includes("本地下载失败") === true);
     expect(completed?.status).toBe("succeeded");
     expect(completed?.videoUrl).toBe("https://example.test/video.mp4");
     expect(completed?.downloadPath).toBeUndefined();
@@ -213,10 +214,18 @@ describe("SerialTaskRunner", () => {
 });
 
 async function waitForTaskStatus(db: Awaited<ReturnType<typeof openDB>>, taskId: string) {
+  return waitForTask(db, taskId, (task) => task.status === "succeeded" || task.status === "failed");
+}
+
+async function waitForTask(
+  db: Awaited<ReturnType<typeof openDB>>,
+  taskId: string,
+  predicate: (task: Awaited<ReturnType<typeof openDB>>["data"]["videoTasks"][number]) => boolean
+) {
   const started = Date.now();
   while (Date.now() - started < 1000) {
     const task = db.data.videoTasks.find((item) => item.id === taskId);
-    if (task?.status === "succeeded" || task?.status === "failed") return task;
+    if (task && predicate(task)) return task;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("Timed out waiting for task to complete.");

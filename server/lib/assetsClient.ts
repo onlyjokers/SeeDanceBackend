@@ -167,6 +167,7 @@ export class AssetsClient {
       port: String(this.config.port),
       host: this.config.host,
       databasePath: this.config.databasePath,
+      sqlitePath: this.config.sqlitePath,
       downloadDir: this.config.downloadDir,
       uploadDir: this.config.uploadDir,
       volcengineAK: this.config.volcengineAK,

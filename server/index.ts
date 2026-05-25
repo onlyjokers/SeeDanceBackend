@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { z } from "zod";
 import { loadConfig, publicConfig } from "./lib/config.js";
-import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createVideoTask, createVideoProject, ensureDefaultVideoProject, getRuntimeSettings, hardDeleteVideoTaskRecord, hideVideoTaskRecord, renameVideoProject, updateRuntimeSettings } from "./lib/db.js";
+import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createVideoTask, createVideoProject, ensureDefaultVideoProject, getRuntimeSettings, getStorageStats, hardDeleteVideoTaskRecord, hideVideoTaskRecord, renameVideoProject, updateRuntimeSettings } from "./lib/db.js";
 import { AssetsClient } from "./lib/assetsClient.js";
 import { VideoClient } from "./lib/videoClient.js";
 import { SerialTaskRunner } from "./lib/taskRunner.js";
@@ -21,7 +21,7 @@ import type { TaskRunContext } from "./lib/taskRunner.js";
 import type { RuntimeSettings } from "./types.js";
 
 const config = loadConfig();
-const db = await openDB(config.databasePath);
+const db = await openDB(config.databasePath, config.sqlitePath);
 await ensureDefaultVideoProject(db);
 await mkdir(config.downloadDir, { recursive: true });
 await mkdir(config.uploadDir, { recursive: true });
@@ -65,6 +65,16 @@ app.patch("/api/runtime-settings", asyncHandler(async (req, res) => {
 app.get("/api/manager/usage/local", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
   res.json(summarizeLocalUsage(db.data));
+}));
+
+app.get("/api/manager/storage", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await getStorageStats(db, {
+    databasePath: config.databasePath,
+    sqlitePath: config.sqlitePath,
+    downloadDir: config.downloadDir,
+    uploadDir: config.uploadDir
+  }));
 }));
 
 app.get("/api/manager/usage/official", asyncHandler(async (req, res) => {
@@ -293,6 +303,7 @@ const runtimeSettingsSchema = z.object({
   databasePath: z.string().trim().min(1),
   downloadDir: z.string().trim().min(1),
   uploadDir: z.string().trim().min(1),
+  sqlitePath: z.string().trim().min(1),
   volcengineAK: z.string().trim(),
   volcengineSK: z.string().trim(),
   volcengineRegion: z.string().trim().min(1),
