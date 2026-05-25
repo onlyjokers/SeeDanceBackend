@@ -1027,21 +1027,17 @@ function ManagerApp() {
   const [message, setMessage] = useState("");
 
   async function refreshManager() {
-    try {
-      const [settingsResponse, stateResponse, localUsageResponse, storageResponse] = await Promise.all([
-        fetch("/api/runtime-settings", { headers: { "x-sts-manager-token": managerToken } }),
-        fetch("/api/state"),
-        fetch("/api/manager/usage/local", { headers: { "x-sts-manager-token": managerToken } }),
-        fetch("/api/manager/storage", { headers: { "x-sts-manager-token": managerToken } })
-      ]);
-      if (!settingsResponse.ok || !stateResponse.ok || !localUsageResponse.ok || !storageResponse.ok) return;
-      setSettings(await settingsResponse.json());
-      setState(await stateResponse.json());
-      setLocalUsage(await localUsageResponse.json());
-      setStorageStats(await storageResponse.json());
-    } catch {
-      // Keep the last manager snapshot visible during short network/server hiccups.
-    }
+    const headers = { "x-sts-manager-token": managerToken };
+    const [settingsResult, stateResult, localUsageResult, storageResult] = await Promise.allSettled([
+      fetchManagerJson<RuntimeSettings>("/api/runtime-settings", headers),
+      fetchManagerJson<AppState>("/api/state"),
+      fetchManagerJson<LocalUsageSummary>("/api/manager/usage/local", headers),
+      fetchManagerJson<StorageStats>("/api/manager/storage", headers)
+    ]);
+    if (settingsResult.status === "fulfilled") setSettings(settingsResult.value);
+    if (stateResult.status === "fulfilled") setState(stateResult.value);
+    if (localUsageResult.status === "fulfilled") setLocalUsage(localUsageResult.value);
+    if (storageResult.status === "fulfilled") setStorageStats(storageResult.value);
   }
 
   async function refreshOfficialUsage() {
@@ -1264,6 +1260,12 @@ function SettingsGroup({ title, children }: { title: string; children: React.Rea
       <div>{children}</div>
     </section>
   );
+}
+
+async function fetchManagerJson<T>(url: string, headers?: HeadersInit): Promise<T> {
+  const response = await fetch(url, headers ? { headers } : undefined);
+  if (!response.ok) throw new Error(`${url} ${response.status}`);
+  return response.json() as Promise<T>;
 }
 
 function UsagePanel({ localUsage, officialUsage, storageStats, officialLoading }: { localUsage: LocalUsageSummary | null; officialUsage: OfficialUsageSummary | null; storageStats: StorageStats | null; officialLoading: boolean }) {
