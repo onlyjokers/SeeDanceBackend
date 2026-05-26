@@ -188,20 +188,6 @@ interface LocalUsageSummary {
   byDay: Array<{ day: string; requests: number }>;
 }
 
-interface OfficialUsageSummary {
-  source: "official";
-  totals: {
-    requests: number;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-    imageCount: number;
-  };
-  rows: Array<Record<string, string | number>>;
-  dataCount: number;
-  error?: string;
-}
-
 interface StorageStats {
   database: {
     jsonPath: string;
@@ -1026,7 +1012,6 @@ function ManagerApp() {
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
   const [localUsage, setLocalUsage] = useState<LocalUsageSummary | null>(null);
-  const [officialUsage, setOfficialUsage] = useState<OfficialUsageSummary | null>(null);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [managerView, setManagerView] = useState<"dashboard" | "records">("dashboard");
   const [busy, setBusy] = useState("");
@@ -1046,31 +1031,9 @@ function ManagerApp() {
     if (storageResult.status === "fulfilled") setStorageStats(storageResult.value);
   }
 
-  async function refreshOfficialUsage() {
-    setBusy("official-usage");
-    setMessage("");
-    try {
-      const response = await fetch("/api/manager/usage/official", { headers: { "x-sts-manager-token": managerToken } });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "刷新官方用量失败");
-      setOfficialUsage(result);
-    } catch (error) {
-      setOfficialUsage({
-        source: "official",
-        totals: { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, imageCount: 0 },
-        rows: [],
-        dataCount: 0,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    } finally {
-      setBusy("");
-    }
-  }
-
   useEffect(() => {
     if (!authenticated) return;
     void refreshManager();
-    void refreshOfficialUsage();
     const timer = window.setInterval(refreshManager, 3000);
     return () => window.clearInterval(timer);
   }, [authenticated]);
@@ -1238,11 +1201,8 @@ function ManagerApp() {
           <section className="manager-card usage-card">
             <h2>
               <span><BarChart3 size={19} />请求量统计</span>
-              <button className="usage-refresh" onClick={refreshOfficialUsage} disabled={busy === "official-usage"}>
-                {busy === "official-usage" ? <Loader2 className="spin" size={15} /> : <RefreshCcw size={15} />}刷新官方
-              </button>
             </h2>
-            <UsagePanel localUsage={localUsage} officialUsage={officialUsage} storageStats={storageStats} officialLoading={busy === "official-usage"} />
+            <UsagePanel localUsage={localUsage} storageStats={storageStats} />
           </section>
         </section> : (
           <ManagerRecords tasks={state.videoTasks} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} onDownloadDebug={downloadTaskDebug} />
@@ -1276,12 +1236,12 @@ async function fetchManagerJson<T>(url: string, headers?: HeadersInit): Promise<
   return response.json() as Promise<T>;
 }
 
-function UsagePanel({ localUsage, officialUsage, storageStats, officialLoading }: { localUsage: LocalUsageSummary | null; officialUsage: OfficialUsageSummary | null; storageStats: StorageStats | null; officialLoading: boolean }) {
+function UsagePanel({ localUsage, storageStats }: { localUsage: LocalUsageSummary | null; storageStats: StorageStats | null }) {
   if (!localUsage) return <div className="record-empty">正在读取本地统计</div>;
   const costEstimate = resolveUsageCostEstimate(localUsage);
   return (
     <div className="usage-panel">
-      <p className="usage-note">本地统计记录本系统提交次数；官方统计来自火山 GetInferenceUsage，存储统计来自本地 SQLite、下载目录和上传目录。</p>
+      <p className="usage-note">本地统计记录本系统提交次数、任务 Token 和估算消费；存储统计来自本地 SQLite、下载目录和上传目录。</p>
       <div className="usage-metrics">
         <UsageMetric label="本地总请求" value={localUsage.totals.requests} />
         <UsageMetric label="本地成功" value={localUsage.byStatus.succeeded} />
@@ -1293,15 +1253,10 @@ function UsagePanel({ localUsage, officialUsage, storageStats, officialLoading }
         <UsageMetric label="下载占用" value={formatBytes(storageStats?.files.downloadBytes ?? 0)} />
         <UsageMetric label="上传占用" value={formatBytes(storageStats?.files.uploadBytes ?? 0)} />
         <UsageMetric label="总占用" value={formatBytes(storageStats?.files.totalBytes ?? 0)} />
-        <UsageMetric label="官方请求" value={officialUsage?.totals.requests ?? 0} />
-        <UsageMetric label="官方 Token" value={officialUsage?.totals.totalTokens ?? 0} />
         <UsageMetric label="任务 Token" value={localUsage.totals.totalTokens} />
         <UsageMetric label="估算消费" value={formatCurrency(costEstimate.estimatedCost)} />
         <UsageMetric label="估算单价" value={`¥${formatDecimal(costEstimate.ratePerThousandTokens, 6)} / 千 Token`} />
-        <UsageMetric label="官方图片量" value={officialUsage?.totals.imageCount ?? 0} />
       </div>
-      {officialLoading && <p className="usage-note">正在刷新官方用量...</p>}
-      {officialUsage?.error && <p className="usage-error">{officialUsage.error}</p>}
       <div className="usage-lists">
         {storageStats && <UsageList title="存储路径" rows={[
           ["SQLite", storageStats.database.sqlitePath],

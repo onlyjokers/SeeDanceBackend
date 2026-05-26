@@ -13,7 +13,6 @@ import { getDownloadPathForTask, openDownloadFolder } from "./lib/downloadFolder
 import { uploadImageToTemporaryHost } from "./lib/uploadProvider.js";
 import { mountStaticClient } from "./lib/staticRouter.js";
 import { summarizeLocalUsage } from "./lib/usageStats.js";
-import { emptyOfficialUsage, InferenceUsageClient } from "./lib/inferenceUsageClient.js";
 import { fileFromLocalUpload, resolveLocalUploadPath, saveUploadedImageLocally } from "./lib/localUploadStore.js";
 import { buildTaskDebugExport } from "./lib/taskDebugExport.js";
 import { errorMessage, retryOperation } from "./lib/retry.js";
@@ -28,7 +27,6 @@ await mkdir(config.uploadDir, { recursive: true });
 
 const assetsClient = new AssetsClient(config, () => getRuntimeSettings(db, config));
 const videoClient = new VideoClient(config, () => getRuntimeSettings(db, config));
-const inferenceUsageClient = new InferenceUsageClient();
 const runner = new SerialTaskRunner(db, videoClient, config, () => getRuntimeSettings(db, config));
 const app = express();
 const managerToken = "sts-manager-session";
@@ -75,16 +73,6 @@ app.get("/api/manager/storage", asyncHandler(async (req, res) => {
     downloadDir: config.downloadDir,
     uploadDir: config.uploadDir
   }));
-}));
-
-app.get("/api/manager/usage/official", asyncHandler(async (req, res) => {
-  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
-  try {
-    const settings = await getRuntimeSettings(db, config);
-    res.json(await inferenceUsageClient.getRecentUsage(settings, { days: 7 }));
-  } catch (error) {
-    res.json(emptyOfficialUsage(error instanceof Error ? error.message : String(error)));
-  }
 }));
 
 app.post("/api/manager/login", asyncHandler(async (req, res) => {
