@@ -32,7 +32,8 @@ export const defaultRuntimeSettings: RuntimeSettings = {
   assetProjectName: "",
   pollIntervalSeconds: "5",
   pollTimeoutSeconds: "3600",
-  maxPollRetryCount: "5"
+  maxPollRetryCount: "5",
+  maxConcurrentVideoTasks: "100"
 };
 
 type DatabaseUpdater = (data: DatabaseShape) => void | Promise<void>;

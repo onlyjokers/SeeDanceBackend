@@ -72,7 +72,8 @@ export class VideoClient {
       assetProjectName: this.config.assetProjectName,
       pollIntervalSeconds: String(this.config.pollIntervalMs / 1000),
       pollTimeoutSeconds: String(this.config.pollTimeoutMs / 1000),
-      maxPollRetryCount: String(this.config.maxPollRetryCount)
+      maxPollRetryCount: String(this.config.maxPollRetryCount),
+      maxConcurrentVideoTasks: String(this.config.maxConcurrentVideoTasks)
     };
   }
 

@@ -21,7 +21,8 @@ const config: AppConfig = {
   assetProjectName: "",
   pollIntervalMs: 5000,
   pollTimeoutMs: 3600000,
-  maxPollRetryCount: 5
+  maxPollRetryCount: 5,
+  maxConcurrentVideoTasks: 100
 };
 
 const runtimeSettings: RuntimeSettings = {
@@ -42,7 +43,8 @@ const runtimeSettings: RuntimeSettings = {
   assetProjectName: "",
   pollIntervalSeconds: "5",
   pollTimeoutSeconds: "3600",
-  maxPollRetryCount: "5"
+  maxPollRetryCount: "5",
+  maxConcurrentVideoTasks: "100"
 };
 
 describe("VideoClient", () => {

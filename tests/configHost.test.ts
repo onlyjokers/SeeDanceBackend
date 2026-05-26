@@ -6,6 +6,7 @@ describe("server host binding", () => {
   const originalVolcengineService = process.env.VOLCENGINE_SERVICE;
   const originalPollTimeoutSeconds = process.env.POLL_TIMEOUT_SECONDS;
   const originalMaxPollRetryCount = process.env.MAX_POLL_RETRY_COUNT;
+  const originalMaxConcurrentVideoTasks = process.env.MAX_CONCURRENT_VIDEO_TASKS;
 
   afterEach(() => {
     if (originalAssetProjectName === undefined) delete process.env.ASSET_PROJECT_NAME;
@@ -16,6 +17,8 @@ describe("server host binding", () => {
     else process.env.POLL_TIMEOUT_SECONDS = originalPollTimeoutSeconds;
     if (originalMaxPollRetryCount === undefined) delete process.env.MAX_POLL_RETRY_COUNT;
     else process.env.MAX_POLL_RETRY_COUNT = originalMaxPollRetryCount;
+    if (originalMaxConcurrentVideoTasks === undefined) delete process.env.MAX_CONCURRENT_VIDEO_TASKS;
+    else process.env.MAX_CONCURRENT_VIDEO_TASKS = originalMaxConcurrentVideoTasks;
   });
 
   it("defaults to 0.0.0.0 so the app can be reached from the LAN", () => {
@@ -78,5 +81,21 @@ describe("server host binding", () => {
     const config = loadConfig();
 
     expect(config.maxPollRetryCount).toBe(8);
+  });
+
+  it("defaults video task concurrency to one hundred", () => {
+    delete process.env.MAX_CONCURRENT_VIDEO_TASKS;
+
+    const config = loadConfig();
+
+    expect(config.maxConcurrentVideoTasks).toBe(100);
+  });
+
+  it("allows video task concurrency to be configured explicitly", () => {
+    process.env.MAX_CONCURRENT_VIDEO_TASKS = "12";
+
+    const config = loadConfig();
+
+    expect(config.maxConcurrentVideoTasks).toBe(12);
   });
 });

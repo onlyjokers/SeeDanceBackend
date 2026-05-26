@@ -28,7 +28,8 @@ const settings: RuntimeSettings = {
   assetProjectName: "QiShiYi",
   pollIntervalSeconds: "5",
   pollTimeoutSeconds: "3600",
-  maxPollRetryCount: "5"
+  maxPollRetryCount: "5",
+  maxConcurrentVideoTasks: "100"
 };
 
 describe("InferenceUsageClient", () => {

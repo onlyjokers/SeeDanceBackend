@@ -90,6 +90,7 @@ export interface RuntimeSettings {
   pollIntervalSeconds: string;
   pollTimeoutSeconds: string;
   maxPollRetryCount: string;
+  maxConcurrentVideoTasks: string;
 }
 
 export interface StorageStats {

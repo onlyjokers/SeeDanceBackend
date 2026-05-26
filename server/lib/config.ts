@@ -19,6 +19,7 @@ export interface AppConfig {
   pollIntervalMs: number;
   pollTimeoutMs: number;
   maxPollRetryCount: number;
+  maxConcurrentVideoTasks: number;
   uploadDir: string;
 }
 
@@ -41,6 +42,7 @@ export function loadConfig(): AppConfig {
     pollIntervalMs: numberEnv("POLL_INTERVAL_SECONDS", 5) * 1000,
     pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 3600) * 1000,
     maxPollRetryCount: integerEnv("MAX_POLL_RETRY_COUNT", 5),
+    maxConcurrentVideoTasks: integerEnv("MAX_CONCURRENT_VIDEO_TASKS", 100),
     uploadDir: process.env.UPLOAD_DIR || "data/uploads"
   };
 }
@@ -58,6 +60,7 @@ export function publicConfig(config: AppConfig) {
     pollIntervalSeconds: config.pollIntervalMs / 1000,
     pollTimeoutSeconds: config.pollTimeoutMs / 1000,
     maxPollRetryCount: config.maxPollRetryCount,
+    maxConcurrentVideoTasks: config.maxConcurrentVideoTasks,
     uploadDir: config.uploadDir,
     sqlitePath: config.sqlitePath
   };

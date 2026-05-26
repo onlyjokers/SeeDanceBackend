@@ -14,7 +14,7 @@ export interface TaskRunContext {
 
 export class SerialTaskRunner {
   private queue: Job[] = [];
-  private active = false;
+  private activeCount = 0;
 
   constructor(
     private readonly db: AppDB,
@@ -31,15 +31,16 @@ export class SerialTaskRunner {
   }
 
   private async drain() {
-    if (this.active) return;
-    this.active = true;
-    try {
-      while (this.queue.length) {
-        const job = this.queue.shift();
-        if (job) await job();
-      }
-    } finally {
-      this.active = false;
+    const settings = await this.currentSettings();
+    const maxConcurrent = settings.maxConcurrentVideoTasks;
+    while (this.activeCount < maxConcurrent && this.queue.length) {
+      const job = this.queue.shift();
+      if (!job) return;
+      this.activeCount += 1;
+      void job().finally(() => {
+        this.activeCount -= 1;
+        void this.drain();
+      });
     }
   }
 
@@ -175,7 +176,8 @@ export class SerialTaskRunner {
   private async currentSettings() {
     const settings = this.runtimeSettings ? await this.runtimeSettings() : undefined;
     return {
-      maxPollRetryCount: parseNonNegativeInteger(settings?.maxPollRetryCount, this.config.maxPollRetryCount)
+      maxPollRetryCount: parseNonNegativeInteger(settings?.maxPollRetryCount, this.config.maxPollRetryCount),
+      maxConcurrentVideoTasks: parsePositiveInteger(settings?.maxConcurrentVideoTasks, this.config.maxConcurrentVideoTasks)
     };
   }
 }
@@ -188,4 +190,10 @@ function parseNonNegativeInteger(value: string | undefined, fallback: number) {
   if (value === undefined || value.trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number) {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

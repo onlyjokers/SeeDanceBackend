@@ -28,7 +28,8 @@ const config: AppConfig = {
   assetProjectName: "",
   pollIntervalMs: 1000,
   pollTimeoutMs: 10000,
-  maxPollRetryCount: 5
+  maxPollRetryCount: 5,
+  maxConcurrentVideoTasks: 100
 };
 
 describe("AssetsClient ProjectName handling", () => {

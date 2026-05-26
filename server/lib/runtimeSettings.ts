@@ -20,7 +20,8 @@ export function runtimeSettingsFromConfig(config: AppConfig): RuntimeSettings {
     assetProjectName: config.assetProjectName,
     pollIntervalSeconds: String(config.pollIntervalMs / 1000),
     pollTimeoutSeconds: String(config.pollTimeoutMs / 1000),
-    maxPollRetryCount: String(config.maxPollRetryCount)
+    maxPollRetryCount: String(config.maxPollRetryCount),
+    maxConcurrentVideoTasks: String(config.maxConcurrentVideoTasks)
   };
 }
 

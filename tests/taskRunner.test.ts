@@ -27,10 +27,67 @@ const config: AppConfig = {
   assetProjectName: "",
   pollIntervalMs: 1,
   pollTimeoutMs: 1000,
-  maxPollRetryCount: 5
+  maxPollRetryCount: 5,
+  maxConcurrentVideoTasks: 3
 };
 
 describe("SerialTaskRunner", () => {
+  it("starts multiple video tasks concurrently up to the configured limit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "seendance-runner-"));
+    const db = await openDB(join(dir, "db.json"));
+    const first = await createVideoTask(db, parseVideoTaskRequest({
+      mode: "text",
+      prompt: "城市街道",
+      references: []
+    }));
+    const second = await createVideoTask(db, parseVideoTaskRequest({
+      mode: "text",
+      prompt: "山间道路",
+      references: []
+    }));
+    const videoClient = {
+      getTask: vi.fn().mockResolvedValue({
+        status: "succeeded",
+        videoUrl: "https://example.test/video.mp4",
+        raw: { status: "succeeded" }
+      }),
+      download: vi.fn().mockResolvedValue(join(dir, "video.mp4"))
+    } as unknown as VideoClient;
+    let activeSubmissions = 0;
+    let maxActiveSubmissions = 0;
+    let releaseFirstSubmission!: () => void;
+    const firstSubmissionBlocked = new Promise<void>((resolve) => {
+      releaseFirstSubmission = resolve;
+    });
+
+    const runner = new SerialTaskRunner(db, videoClient, {
+      ...config,
+      maxConcurrentVideoTasks: 2
+    });
+    const enqueueTask = (taskId: string, remoteTaskId: string) => {
+      runner.enqueue(taskId, async () => {
+        activeSubmissions += 1;
+        maxActiveSubmissions = Math.max(maxActiveSubmissions, activeSubmissions);
+        if (remoteTaskId === "remote-1") await firstSubmissionBlocked;
+        activeSubmissions -= 1;
+        return {
+          remoteTaskId,
+          raw: { id: remoteTaskId }
+        };
+      });
+    };
+
+    enqueueTask(first.id, "remote-1");
+    enqueueTask(second.id, "remote-2");
+
+    await waitForCondition(() => maxActiveSubmissions === 2);
+    releaseFirstSubmission();
+    await waitForTaskStatus(db, first.id);
+    await waitForTaskStatus(db, second.id);
+
+    expect(maxActiveSubmissions).toBe(2);
+  });
+
   it("continues polling when transient status fetches fail within the retry limit", async () => {
     const dir = await mkdtemp(join(tmpdir(), "seendance-runner-"));
     const db = await openDB(join(dir, "db.json"));
@@ -229,4 +286,13 @@ async function waitForTask(
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("Timed out waiting for task to complete.");
+}
+
+async function waitForCondition(predicate: () => boolean) {
+  const started = Date.now();
+  while (Date.now() - started < 1000) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for condition.");
 }

@@ -23,7 +23,8 @@ const config: AppConfig = {
   assetProjectName: "QiShiYi",
   pollIntervalMs: 5000,
   pollTimeoutMs: 3600000,
-  maxPollRetryCount: 5
+  maxPollRetryCount: 5,
+  maxConcurrentVideoTasks: 100
 };
 
 describe("expanded runtime settings", () => {
@@ -49,7 +50,8 @@ describe("expanded runtime settings", () => {
       assetProjectName: "QiShiYi",
       pollIntervalSeconds: "5",
       pollTimeoutSeconds: "3600",
-      maxPollRetryCount: "5"
+      maxPollRetryCount: "5",
+      maxConcurrentVideoTasks: "100"
     });
   });
 
@@ -63,7 +65,8 @@ describe("expanded runtime settings", () => {
       assetProjectName: "NextProject",
       pollIntervalSeconds: "10",
       pollTimeoutSeconds: "1200",
-      maxPollRetryCount: "7"
+      maxPollRetryCount: "7",
+      maxConcurrentVideoTasks: "12"
     });
 
     await expect(getRuntimeSettings(db, config)).resolves.toMatchObject({
@@ -72,7 +75,8 @@ describe("expanded runtime settings", () => {
       assetProjectName: "NextProject",
       pollIntervalSeconds: "10",
       pollTimeoutSeconds: "1200",
-      maxPollRetryCount: "7"
+      maxPollRetryCount: "7",
+      maxConcurrentVideoTasks: "12"
     });
   });
 
@@ -131,6 +135,7 @@ function awaitableRuntimeSettingsFallback() {
     assetProjectName: "QiShiYi",
     pollIntervalSeconds: "5",
     pollTimeoutSeconds: "3600",
-    maxPollRetryCount: "5"
+    maxPollRetryCount: "5",
+    maxConcurrentVideoTasks: "100"
   };
 }

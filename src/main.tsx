@@ -62,6 +62,7 @@ interface PublicConfig {
   pollIntervalSeconds: number;
   pollTimeoutSeconds: number;
   maxPollRetryCount: number;
+  maxConcurrentVideoTasks: number;
   uploadDir: string;
   sqlitePath: string;
 }
@@ -85,6 +86,7 @@ interface RuntimeSettings {
   pollIntervalSeconds: string;
   pollTimeoutSeconds: string;
   maxPollRetryCount: string;
+  maxConcurrentVideoTasks: string;
 }
 
 interface AssetGroup {
@@ -1223,6 +1225,7 @@ function ManagerApp() {
                   <SettingField label="POLL_INTERVAL_SECONDS" value={settings.pollIntervalSeconds} onChange={(value) => setSettings({ ...settings, pollIntervalSeconds: value })} />
                   <SettingField label="POLL_TIMEOUT_SECONDS" value={settings.pollTimeoutSeconds} onChange={(value) => setSettings({ ...settings, pollTimeoutSeconds: value })} />
                   <SettingField label="MAX_POLL_RETRY_COUNT" value={settings.maxPollRetryCount} onChange={(value) => setSettings({ ...settings, maxPollRetryCount: value })} />
+                  <SettingField label="MAX_CONCURRENT_VIDEO_TASKS" value={settings.maxConcurrentVideoTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentVideoTasks: value })} />
                 </SettingsGroup>
               </div>
             )}
