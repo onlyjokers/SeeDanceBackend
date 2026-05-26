@@ -14,6 +14,13 @@ export interface LocalUsageSummary {
     outputTokens: number;
     totalTokens: number;
   };
+  costEstimate: {
+    currency: "CNY";
+    unit: "per_1k_tokens";
+    ratePerThousandTokens: number;
+    totalTokens: number;
+    estimatedCost: number;
+  };
   byStatus: Record<VideoTask["status"], number>;
   byProject: Array<{ projectId: string; projectName: string; requests: number; succeeded: number; failed: number; hidden: number }>;
   byModel: Array<{ modelVersion: string; requests: number; succeeded: number; failed: number }>;
@@ -82,9 +89,31 @@ export function summarizeLocalUsage(data: DatabaseShape): LocalUsageSummary {
       outputTokens,
       totalTokens
     },
+    costEstimate: estimateTokenCost(totalTokens, data.runtimeSettings?.tokenPricePerThousand),
     byStatus,
     byProject: [...byProject.values()].sort((a, b) => b.requests - a.requests),
     byModel: [...byModel.values()].sort((a, b) => b.requests - a.requests),
     byDay: [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, requests]) => ({ day, requests }))
   };
+}
+
+function estimateTokenCost(totalTokens: number, rawRate: string | undefined) {
+  const rate = parsePositiveNumber(rawRate, 0.049085);
+  return {
+    currency: "CNY" as const,
+    unit: "per_1k_tokens" as const,
+    ratePerThousandTokens: rate,
+    totalTokens,
+    estimatedCost: roundMoney((totalTokens / 1000) * rate)
+  };
+}
+
+function parsePositiveNumber(value: string | undefined, fallback: number) {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
 }

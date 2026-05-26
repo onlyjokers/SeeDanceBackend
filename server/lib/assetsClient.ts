@@ -182,7 +182,8 @@ export class AssetsClient {
       pollIntervalSeconds: String(this.config.pollIntervalMs / 1000),
       pollTimeoutSeconds: String(this.config.pollTimeoutMs / 1000),
       maxPollRetryCount: String(this.config.maxPollRetryCount),
-      maxConcurrentVideoTasks: String(this.config.maxConcurrentVideoTasks)
+      maxConcurrentVideoTasks: String(this.config.maxConcurrentVideoTasks),
+      tokenPricePerThousand: String(this.config.tokenPricePerThousand)
     };
   }
 }

@@ -22,7 +22,8 @@ const config: AppConfig = {
   pollIntervalMs: 5000,
   pollTimeoutMs: 3600000,
   maxPollRetryCount: 5,
-  maxConcurrentVideoTasks: 100
+  maxConcurrentVideoTasks: 100,
+  tokenPricePerThousand: 0.049085
 };
 
 const runtimeSettings: RuntimeSettings = {
@@ -44,7 +45,8 @@ const runtimeSettings: RuntimeSettings = {
   pollIntervalSeconds: "5",
   pollTimeoutSeconds: "3600",
   maxPollRetryCount: "5",
-  maxConcurrentVideoTasks: "100"
+  maxConcurrentVideoTasks: "100",
+  tokenPricePerThousand: "0.049085"
 };
 
 describe("VideoClient", () => {

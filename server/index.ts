@@ -316,7 +316,8 @@ const runtimeSettingsSchema = z.object({
   pollIntervalSeconds: z.string().trim().min(1),
   pollTimeoutSeconds: z.string().trim().min(1),
   maxPollRetryCount: z.string().trim().min(1),
-  maxConcurrentVideoTasks: z.string().trim().min(1)
+  maxConcurrentVideoTasks: z.string().trim().min(1),
+  tokenPricePerThousand: z.string().trim().min(1)
 });
 
 function isManagerRequest(req: express.Request) {

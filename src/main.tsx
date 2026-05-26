@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { insertReferenceToken, labelForReferenceIndex } from "./promptReferences";
+import { resolveUsageCostEstimate, type UsageCostEstimate } from "./managerUsage";
 import {
   ArrowUp,
   Check,
@@ -63,6 +64,7 @@ interface PublicConfig {
   pollTimeoutSeconds: number;
   maxPollRetryCount: number;
   maxConcurrentVideoTasks: number;
+  tokenPricePerThousand: number;
   uploadDir: string;
   sqlitePath: string;
 }
@@ -87,6 +89,7 @@ interface RuntimeSettings {
   pollTimeoutSeconds: string;
   maxPollRetryCount: string;
   maxConcurrentVideoTasks: string;
+  tokenPricePerThousand: string;
 }
 
 interface AssetGroup {
@@ -178,6 +181,7 @@ interface LocalUsageSummary {
     outputTokens: number;
     totalTokens: number;
   };
+  costEstimate?: UsageCostEstimate;
   byStatus: Record<VideoTask["status"], number>;
   byProject: Array<{ projectId: string; projectName: string; requests: number; succeeded: number; failed: number; hidden: number }>;
   byModel: Array<{ modelVersion: string; requests: number; succeeded: number; failed: number }>;
@@ -1226,6 +1230,7 @@ function ManagerApp() {
                   <SettingField label="POLL_TIMEOUT_SECONDS" value={settings.pollTimeoutSeconds} onChange={(value) => setSettings({ ...settings, pollTimeoutSeconds: value })} />
                   <SettingField label="MAX_POLL_RETRY_COUNT" value={settings.maxPollRetryCount} onChange={(value) => setSettings({ ...settings, maxPollRetryCount: value })} />
                   <SettingField label="MAX_CONCURRENT_VIDEO_TASKS" value={settings.maxConcurrentVideoTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentVideoTasks: value })} />
+                  <SettingField label="TOKEN_PRICE_PER_THOUSAND" value={settings.tokenPricePerThousand} onChange={(value) => setSettings({ ...settings, tokenPricePerThousand: value })} />
                 </SettingsGroup>
               </div>
             )}
@@ -1273,6 +1278,7 @@ async function fetchManagerJson<T>(url: string, headers?: HeadersInit): Promise<
 
 function UsagePanel({ localUsage, officialUsage, storageStats, officialLoading }: { localUsage: LocalUsageSummary | null; officialUsage: OfficialUsageSummary | null; storageStats: StorageStats | null; officialLoading: boolean }) {
   if (!localUsage) return <div className="record-empty">正在读取本地统计</div>;
+  const costEstimate = resolveUsageCostEstimate(localUsage);
   return (
     <div className="usage-panel">
       <p className="usage-note">本地统计记录本系统提交次数；官方统计来自火山 GetInferenceUsage，存储统计来自本地 SQLite、下载目录和上传目录。</p>
@@ -1290,6 +1296,8 @@ function UsagePanel({ localUsage, officialUsage, storageStats, officialLoading }
         <UsageMetric label="官方请求" value={officialUsage?.totals.requests ?? 0} />
         <UsageMetric label="官方 Token" value={officialUsage?.totals.totalTokens ?? 0} />
         <UsageMetric label="任务 Token" value={localUsage.totals.totalTokens} />
+        <UsageMetric label="估算消费" value={formatCurrency(costEstimate.estimatedCost)} />
+        <UsageMetric label="估算单价" value={`¥${formatDecimal(costEstimate.ratePerThousandTokens, 6)} / 千 Token`} />
         <UsageMetric label="官方图片量" value={officialUsage?.totals.imageCount ?? 0} />
       </div>
       {officialLoading && <p className="usage-note">正在刷新官方用量...</p>}
@@ -1319,6 +1327,23 @@ function formatBytes(bytes: number) {
     unitIndex += 1;
   }
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatCurrency(value: number) {
+  if (!Number.isFinite(value)) return "¥0.00";
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "CNY",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(value);
+}
+
+function formatDecimal(value: number, maximumFractionDigits = 4) {
+  if (!Number.isFinite(value)) return "0";
+  return new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits
+  }).format(value);
 }
 
 function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }: { tasks: VideoTask[]; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => void; onDownloadDebug: (taskId: string) => void }) {

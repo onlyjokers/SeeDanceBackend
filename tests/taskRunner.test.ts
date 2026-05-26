@@ -28,7 +28,8 @@ const config: AppConfig = {
   pollIntervalMs: 1,
   pollTimeoutMs: 1000,
   maxPollRetryCount: 5,
-  maxConcurrentVideoTasks: 3
+  maxConcurrentVideoTasks: 3,
+  tokenPricePerThousand: 0.049085
 };
 
 describe("SerialTaskRunner", () => {

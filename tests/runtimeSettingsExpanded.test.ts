@@ -24,7 +24,8 @@ const config: AppConfig = {
   pollIntervalMs: 5000,
   pollTimeoutMs: 3600000,
   maxPollRetryCount: 5,
-  maxConcurrentVideoTasks: 100
+  maxConcurrentVideoTasks: 100,
+  tokenPricePerThousand: 0.049085
 };
 
 describe("expanded runtime settings", () => {
@@ -51,7 +52,8 @@ describe("expanded runtime settings", () => {
       pollIntervalSeconds: "5",
       pollTimeoutSeconds: "3600",
       maxPollRetryCount: "5",
-      maxConcurrentVideoTasks: "100"
+      maxConcurrentVideoTasks: "100",
+      tokenPricePerThousand: "0.049085"
     });
   });
 
@@ -66,7 +68,8 @@ describe("expanded runtime settings", () => {
       pollIntervalSeconds: "10",
       pollTimeoutSeconds: "1200",
       maxPollRetryCount: "7",
-      maxConcurrentVideoTasks: "12"
+      maxConcurrentVideoTasks: "12",
+      tokenPricePerThousand: "0.05"
     });
 
     await expect(getRuntimeSettings(db, config)).resolves.toMatchObject({
@@ -76,7 +79,8 @@ describe("expanded runtime settings", () => {
       pollIntervalSeconds: "10",
       pollTimeoutSeconds: "1200",
       maxPollRetryCount: "7",
-      maxConcurrentVideoTasks: "12"
+      maxConcurrentVideoTasks: "12",
+      tokenPricePerThousand: "0.05"
     });
   });
 
@@ -136,6 +140,7 @@ function awaitableRuntimeSettingsFallback() {
     pollIntervalSeconds: "5",
     pollTimeoutSeconds: "3600",
     maxPollRetryCount: "5",
-    maxConcurrentVideoTasks: "100"
+    maxConcurrentVideoTasks: "100",
+    tokenPricePerThousand: "0.049085"
   };
 }

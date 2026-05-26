@@ -21,7 +21,8 @@ export function runtimeSettingsFromConfig(config: AppConfig): RuntimeSettings {
     pollIntervalSeconds: String(config.pollIntervalMs / 1000),
     pollTimeoutSeconds: String(config.pollTimeoutMs / 1000),
     maxPollRetryCount: String(config.maxPollRetryCount),
-    maxConcurrentVideoTasks: String(config.maxConcurrentVideoTasks)
+    maxConcurrentVideoTasks: String(config.maxConcurrentVideoTasks),
+    tokenPricePerThousand: String(config.tokenPricePerThousand)
   };
 }
 

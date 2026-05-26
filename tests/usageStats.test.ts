@@ -70,6 +70,13 @@ describe("usage stats", () => {
     expect(summary.totals.inputTokens).toBe(10);
     expect(summary.totals.outputTokens).toBe(110);
     expect(summary.totals.totalTokens).toBe(120);
+    expect(summary.costEstimate).toEqual({
+      currency: "CNY",
+      unit: "per_1k_tokens",
+      ratePerThousandTokens: 0.049085,
+      totalTokens: 120,
+      estimatedCost: 0.01
+    });
     expect(summary.byStatus).toEqual({ queued: 0, running: 1, succeeded: 1, failed: 1 });
     expect(summary.byProject[0]).toMatchObject({ projectId: "p1", projectName: "广告", requests: 2 });
     expect(summary.byModel[0]).toMatchObject({ modelVersion: "doubao-seedance-2-0-fast-260128", requests: 2 });

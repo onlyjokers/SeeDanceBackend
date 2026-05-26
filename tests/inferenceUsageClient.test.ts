@@ -29,7 +29,8 @@ const settings: RuntimeSettings = {
   pollIntervalSeconds: "5",
   pollTimeoutSeconds: "3600",
   maxPollRetryCount: "5",
-  maxConcurrentVideoTasks: "100"
+  maxConcurrentVideoTasks: "100",
+  tokenPricePerThousand: "0.049085"
 };
 
 describe("InferenceUsageClient", () => {

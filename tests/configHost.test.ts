@@ -7,6 +7,7 @@ describe("server host binding", () => {
   const originalPollTimeoutSeconds = process.env.POLL_TIMEOUT_SECONDS;
   const originalMaxPollRetryCount = process.env.MAX_POLL_RETRY_COUNT;
   const originalMaxConcurrentVideoTasks = process.env.MAX_CONCURRENT_VIDEO_TASKS;
+  const originalTokenPricePerThousand = process.env.TOKEN_PRICE_PER_THOUSAND;
 
   afterEach(() => {
     if (originalAssetProjectName === undefined) delete process.env.ASSET_PROJECT_NAME;
@@ -19,6 +20,8 @@ describe("server host binding", () => {
     else process.env.MAX_POLL_RETRY_COUNT = originalMaxPollRetryCount;
     if (originalMaxConcurrentVideoTasks === undefined) delete process.env.MAX_CONCURRENT_VIDEO_TASKS;
     else process.env.MAX_CONCURRENT_VIDEO_TASKS = originalMaxConcurrentVideoTasks;
+    if (originalTokenPricePerThousand === undefined) delete process.env.TOKEN_PRICE_PER_THOUSAND;
+    else process.env.TOKEN_PRICE_PER_THOUSAND = originalTokenPricePerThousand;
   });
 
   it("defaults to 0.0.0.0 so the app can be reached from the LAN", () => {
@@ -97,5 +100,21 @@ describe("server host binding", () => {
     const config = loadConfig();
 
     expect(config.maxConcurrentVideoTasks).toBe(12);
+  });
+
+  it("defaults token price to the current configured estimate", () => {
+    delete process.env.TOKEN_PRICE_PER_THOUSAND;
+
+    const config = loadConfig();
+
+    expect(config.tokenPricePerThousand).toBe(0.049085);
+  });
+
+  it("allows token price to be configured explicitly", () => {
+    process.env.TOKEN_PRICE_PER_THOUSAND = "0.05";
+
+    const config = loadConfig();
+
+    expect(config.tokenPricePerThousand).toBe(0.05);
   });
 });
