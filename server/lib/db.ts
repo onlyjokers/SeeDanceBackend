@@ -126,10 +126,10 @@ export async function deleteAsset(db: AppDB, id: string) {
 }
 
 export async function ensureDefaultVideoProject(db: AppDB): Promise<VideoProject> {
-  let project = db.data.videoProjects[0];
+  let project = db.data.videoProjects.find((item) => !item.deletedAt);
   const needsProject = !project;
   const needsBackfill = db.data.videoTasks.some((task) => !task.projectId);
-  if (!needsProject && !needsBackfill) return project;
+  if (project && !needsProject && !needsBackfill) return project;
 
   await db.update((data) => {
     if (!project) {
@@ -146,6 +146,7 @@ export async function ensureDefaultVideoProject(db: AppDB): Promise<VideoProject
       task.projectId ??= project!.id;
     });
   });
+  if (!project) throw new Error("默认项目创建失败。");
   return project;
 }
 
@@ -176,10 +177,43 @@ export async function renameVideoProject(db: AppDB, id: string, name: string): P
   return project;
 }
 
+export async function softDeleteVideoProject(db: AppDB, id: string): Promise<VideoProject> {
+  let project: VideoProject | undefined;
+  await db.update((data) => {
+    project = data.videoProjects.find((item) => item.id === id);
+    if (!project) return;
+    const now = new Date().toISOString();
+    project.deletedAt ??= now;
+    project.updatedAt = now;
+    if (!data.videoProjects.some((item) => !item.deletedAt)) {
+      data.videoProjects.unshift({
+        id: crypto.randomUUID(),
+        name: "默认项目",
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+  });
+  if (!project) throw new Error("项目不存在。");
+  return project;
+}
+
+export async function restoreVideoProject(db: AppDB, id: string): Promise<VideoProject> {
+  let project: VideoProject | undefined;
+  await db.update((data) => {
+    project = data.videoProjects.find((item) => item.id === id);
+    if (!project) return;
+    delete project.deletedAt;
+    project.updatedAt = new Date().toISOString();
+  });
+  if (!project) throw new Error("项目不存在。");
+  return project;
+}
+
 export async function createVideoTask(db: AppDB, input: VideoTaskRequest, assetIds: string[] = []): Promise<VideoTask> {
   const now = new Date().toISOString();
   const project = input.projectId
-    ? db.data.videoProjects.find((item) => item.id === input.projectId) ?? await ensureDefaultVideoProject(db)
+    ? db.data.videoProjects.find((item) => item.id === input.projectId && !item.deletedAt) ?? await ensureDefaultVideoProject(db)
     : await ensureDefaultVideoProject(db);
   const task: VideoTask = {
     id: crypto.randomUUID(),
@@ -218,7 +252,97 @@ export async function hideVideoTaskRecord(db: AppDB, id: string) {
 }
 
 export function getExecutorVideoTasks(data: DatabaseShape) {
-  return data.videoTasks.filter((task) => !task.hiddenAt);
+  const activeProjectIds = new Set(getExecutorVideoProjects(data).map((project) => project.id));
+  return data.videoTasks.filter((task) => !task.hiddenAt && (!task.projectId || activeProjectIds.has(task.projectId)));
+}
+
+export function getExecutorVideoProjects(data: DatabaseShape) {
+  return data.videoProjects.filter((project) => !project.deletedAt);
+}
+
+export interface VideoTaskPageInput {
+  projectId?: string;
+  limit?: number;
+  before?: string;
+  status?: "all" | VideoTask["status"] | "hidden";
+  query?: string;
+  sort?: "newest" | "oldest" | "status" | "project";
+}
+
+export interface VideoTaskPage {
+  items: VideoTask[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
+export function getExecutorVideoTaskPage(data: DatabaseShape, input: VideoTaskPageInput): VideoTaskPage {
+  const activeProjectIds = new Set(getExecutorVideoProjects(data).map((project) => project.id));
+  const projectId = input.projectId;
+  const tasks = data.videoTasks
+    .filter((task) => !task.hiddenAt && (!task.projectId || activeProjectIds.has(task.projectId)))
+    .filter((task) => !projectId || task.projectId === projectId)
+    .sort(compareTasksNewest);
+  return paginateTasks(tasks, input.limit, input.before);
+}
+
+export function getManagerVideoTaskPage(data: DatabaseShape, input: VideoTaskPageInput): VideoTaskPage {
+  const normalizedQuery = input.query?.trim().toLowerCase() ?? "";
+  const projectNames = new Map(data.videoProjects.map((project) => [project.id, project.name]));
+  const tasks = data.videoTasks
+    .filter((task) => {
+      if (input.projectId && task.projectId !== input.projectId) return false;
+      if (input.status === "hidden" && !task.hiddenAt) return false;
+      if (input.status && input.status !== "all" && input.status !== "hidden" && task.status !== input.status) return false;
+      if (!normalizedQuery) return true;
+      const haystack = [
+        task.id,
+        task.remoteTaskId,
+        task.prompt,
+        task.modelVersion,
+        task.status,
+        projectNames.get(task.projectId ?? "")
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(normalizedQuery);
+    })
+    .sort(compareForManager(input.sort ?? "newest", projectNames));
+  return paginateTasks(tasks, input.limit, input.before);
+}
+
+function paginateTasks(tasks: VideoTask[], rawLimit = 50, before?: string): VideoTaskPage {
+  const limit = Math.max(1, Math.min(100, Math.floor(rawLimit)));
+  const cursorIndex = before ? tasks.findIndex((task) => taskCursor(task) === before) : -1;
+  const pageSource = cursorIndex >= 0 ? tasks.slice(cursorIndex + 1) : tasks;
+  const items = pageSource.slice(0, limit);
+  return {
+    items,
+    nextCursor: items.length ? taskCursor(items[items.length - 1]) : undefined,
+    hasMore: pageSource.length > limit
+  };
+}
+
+function taskCursor(task: VideoTask) {
+  return `${task.createdAt}::${task.id}`;
+}
+
+function compareTasksNewest(a: VideoTask, b: VideoTask) {
+  const created = b.createdAt.localeCompare(a.createdAt);
+  return created || b.id.localeCompare(a.id);
+}
+
+function compareForManager(sort: NonNullable<VideoTaskPageInput["sort"]>, projectNames: Map<string, string>) {
+  return (a: VideoTask, b: VideoTask) => {
+    if (sort === "oldest") {
+      const created = a.createdAt.localeCompare(b.createdAt);
+      return created || a.id.localeCompare(b.id);
+    }
+    if (sort === "status") {
+      return a.status.localeCompare(b.status) || compareTasksNewest(a, b);
+    }
+    if (sort === "project") {
+      return (projectNames.get(a.projectId ?? "") ?? "").localeCompare(projectNames.get(b.projectId ?? "") ?? "", "zh-CN") || compareTasksNewest(a, b);
+    }
+    return compareTasksNewest(a, b);
+  };
 }
 
 export async function hardDeleteVideoTaskRecord(db: AppDB, id: string) {

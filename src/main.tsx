@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createRoot } from "react-dom/client";
+import { readJsonOrThrow } from "./http";
 import { insertReferenceToken, labelForReferenceIndex } from "./promptReferences";
 import { resolveUsageCostEstimate, type UsageCostEstimate } from "./managerUsage";
 import {
@@ -45,6 +46,9 @@ type TopFilterKind = "time" | "mode" | "status";
 type TimeFilter = "all" | "today" | "week";
 type ModeFilter = "all" | VideoMode;
 type StatusFilter = "all" | VideoTask["status"];
+type UsageGranularity = "hour" | "day" | "week" | "month";
+type UsageMetricMode = "tokens" | "cost";
+type ProjectCardSize = "compact" | "regular" | "wide";
 
 interface OpenMenuState {
   kind: MenuKind;
@@ -168,6 +172,12 @@ interface AppState {
   runtimeSettings?: RuntimeSettings;
 }
 
+interface VideoTaskPage {
+  items: VideoTask[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
 interface LocalUsageSummary {
   source: "local";
   credentialsRequired: false;
@@ -186,6 +196,33 @@ interface LocalUsageSummary {
   byProject: Array<{ projectId: string; projectName: string; requests: number; succeeded: number; failed: number; hidden: number }>;
   byModel: Array<{ modelVersion: string; requests: number; succeeded: number; failed: number }>;
   byDay: Array<{ day: string; requests: number }>;
+  projectUsage?: ProjectUsageSummary[];
+}
+
+interface UsageBucket {
+  key: string;
+  label: string;
+  requests: number;
+  succeeded: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCost: number;
+}
+
+interface ProjectUsageSummary {
+  projectId: string;
+  projectName: string;
+  deletedAt?: string;
+  requests: number;
+  succeeded: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCost: number;
+  buckets: Record<UsageGranularity, UsageBucket[]>;
 }
 
 interface StorageStats {
@@ -218,6 +255,7 @@ interface StorageStats {
 interface VideoProject {
   id: string;
   name: string;
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -236,6 +274,38 @@ interface ReferenceSlot {
 }
 
 const emptyState: AppState = { assetGroups: [], assets: [], videoProjects: [], videoTasks: [], pollLogs: [] };
+
+function mergeTasksById(...groups: VideoTask[][]) {
+  const byId = new Map<string, VideoTask>();
+  for (const group of groups) {
+    for (const task of group) {
+      byId.set(task.id, { ...byId.get(task.id), ...task });
+    }
+  }
+  return sortTasksForBottomStack(Array.from(byId.values()));
+}
+
+function executorTasksUrl({ projectId, limit, before }: { projectId?: string; limit: number; before?: string }) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (projectId) params.set("projectId", projectId);
+  if (before) params.set("before", before);
+  return `/api/executor/tasks?${params.toString()}`;
+}
+
+function managerTasksUrl(input: {
+  limit: number;
+  before?: string;
+  query?: string;
+  status?: "all" | VideoTask["status"] | "hidden";
+  sort?: "newest" | "oldest" | "status" | "project";
+}) {
+  const params = new URLSearchParams({ limit: String(input.limit) });
+  if (input.before) params.set("before", input.before);
+  if (input.query?.trim()) params.set("query", input.query.trim());
+  if (input.status && input.status !== "all") params.set("status", input.status);
+  if (input.sort) params.set("sort", input.sort);
+  return `/api/manager/video-tasks?${params.toString()}`;
+}
 
 const modelOptions: Array<{ value: VideoModelVersion; label: string; short: string }> = [
   { value: "doubao-seedance-2-0-fast-260128", label: "Seedance 2.0 Fast", short: "Fast" },
@@ -274,24 +344,39 @@ function App() {
   const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [openTopFilter, setOpenTopFilter] = useState<TopFilterKind | null>(null);
+  const [executorTasks, setExecutorTasks] = useState<VideoTask[]>([]);
+  const [executorCursor, setExecutorCursor] = useState<string | undefined>();
+  const [executorHasMore, setExecutorHasMore] = useState(false);
+  const [executorLoadingOlder, setExecutorLoadingOlder] = useState(false);
   const didInitialScrollRef = useRef(false);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
 
-  const activeProjectId = selectedProjectId ?? state.videoProjects[0]?.id ?? "";
-  const visibleTasks = useMemo(() => state.videoTasks.filter((task) => !task.hiddenAt), [state.videoTasks]);
-  const filteredTasks = useMemo(() => filterTasks(visibleTasks, { timeFilter, modeFilter, statusFilter }), [modeFilter, statusFilter, timeFilter, visibleTasks]);
-  const sessionTasks = useMemo(() => sortTasksForBottomStack(filteredTasks.filter((task) => (task.projectId ?? state.videoProjects[0]?.id) === activeProjectId)), [activeProjectId, state.videoProjects, filteredTasks]);
-  const generatedAssets = useMemo(() => sortTasksForBottomStack(filteredTasks.filter((task) => task.videoUrl || task.downloadPath)), [filteredTasks]);
+  const activeProjects = useMemo(() => state.videoProjects.filter((project) => !project.deletedAt), [state.videoProjects]);
+  const activeProjectIds = useMemo(() => new Set(activeProjects.map((project) => project.id)), [activeProjects]);
+  const activeProjectId = selectedProjectId ?? activeProjects[0]?.id ?? "";
+  const activeProjectIdRef = useRef(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
+  const filteredTasks = useMemo(() => filterTasks(executorTasks, { timeFilter, modeFilter, statusFilter }), [executorTasks, modeFilter, statusFilter, timeFilter]);
+  const sessionTasks = useMemo(() => sortTasksForBottomStack(filteredTasks), [filteredTasks]);
+  const generatedAssets = useMemo(() => sortTasksForBottomStack(executorTasks.filter((task) => task.videoUrl || task.downloadPath)), [executorTasks]);
   const selectedModel = modelOptions.find((item) => item.value === modelVersion) ?? modelOptions[0];
   const availableResolutions = useMemo(() => allowedResolutions(modelVersion), [modelVersion]);
 
   async function refresh() {
     try {
-      const [configResponse, stateResponse] = await Promise.all([fetch("/api/config"), fetch("/api/state")]);
-      if (!configResponse.ok || !stateResponse.ok) return;
+      const [configResponse, stateResponse, tasksResponse] = await Promise.all([
+        fetch("/api/config"),
+        fetch("/api/shell-state"),
+        fetch(executorTasksUrl({ projectId: activeProjectIdRef.current, limit: 30 }))
+      ]);
+      if (!configResponse.ok || !stateResponse.ok || !tasksResponse.ok) return;
       setConfig(await configResponse.json());
       setState(await stateResponse.json());
+      const taskPage = await tasksResponse.json() as VideoTaskPage;
+      setExecutorTasks((current) => mergeTasksById(current, taskPage.items));
+      setExecutorCursor((cursor) => cursor ?? taskPage.nextCursor);
+      setExecutorHasMore(taskPage.hasMore);
     } catch {
       // Ignore transient refresh failures; explicit actions still surface errors.
     }
@@ -304,14 +389,56 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedProjectId && state.videoProjects[0]?.id) setSelectedProjectId(state.videoProjects[0].id);
-  }, [selectedProjectId, state.videoProjects]);
+    if (selectedProjectId && activeProjectIds.has(selectedProjectId)) return;
+    if (activeProjects[0]?.id) setSelectedProjectId(activeProjects[0].id);
+    else setSelectedProjectId(null);
+  }, [activeProjectIds, activeProjects, selectedProjectId]);
 
   useEffect(() => {
-    if (didInitialScrollRef.current || !state.videoTasks.length) return;
+    if (!activeProjectId) return;
+    didInitialScrollRef.current = false;
+    setExecutorTasks([]);
+    setExecutorCursor(undefined);
+    setExecutorHasMore(false);
+    void refresh();
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (didInitialScrollRef.current || !executorTasks.length) return;
     didInitialScrollRef.current = true;
     window.requestAnimationFrame(() => scrollTimelineToBottom());
-  }, [state.videoTasks.length]);
+  }, [executorTasks.length]);
+
+  useEffect(() => {
+    if (view !== "generate") return;
+    window.addEventListener("scroll", handleTimelineScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleTimelineScroll);
+  }, [view, executorHasMore, executorLoadingOlder, executorCursor, activeProjectId]);
+
+  async function loadOlderExecutorTasks() {
+    if (!executorHasMore || executorLoadingOlder || !executorCursor) return;
+    const previousHeight = document.documentElement.scrollHeight;
+    setExecutorLoadingOlder(true);
+    try {
+      const response = await fetch(executorTasksUrl({ projectId: activeProjectId, limit: 30, before: executorCursor }));
+      if (!response.ok) return;
+      const page = await response.json() as VideoTaskPage;
+      setExecutorTasks((current) => mergeTasksById(current, page.items));
+      setExecutorCursor(page.nextCursor);
+      setExecutorHasMore(page.hasMore);
+      window.requestAnimationFrame(() => {
+        const delta = document.documentElement.scrollHeight - previousHeight;
+        if (delta > 0) window.scrollBy({ top: delta });
+      });
+    } finally {
+      setExecutorLoadingOlder(false);
+    }
+  }
+
+  function handleTimelineScroll() {
+    if (view !== "generate" || window.scrollY > 180) return;
+    void loadOlderExecutorTasks();
+  }
 
   function switchMode(nextMode: VideoMode) {
     setMode(nextMode);
@@ -347,9 +474,9 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "提交视频任务失败");
+      const result = await readJsonOrThrow<VideoTask>(response, "提交视频任务失败");
       setSelectedTaskId(result.id);
+      setExecutorTasks((current) => mergeTasksById([result], current));
       await refresh();
       window.requestAnimationFrame(() => scrollTimelineToBottom("smooth"));
     } catch (error) {
@@ -414,9 +541,9 @@ function App() {
     setToast("");
     try {
       const response = await fetch(`/api/video-tasks/${taskId}`, { method: "DELETE" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "删除记录失败");
+      await readJsonOrThrow(response, "删除记录失败");
       setSelectedTaskId((id) => id === taskId ? null : id);
+      setExecutorTasks((tasks) => tasks.filter((task) => task.id !== taskId));
       await refresh();
     } catch (error) {
       setToast(error instanceof Error ? error.message : String(error));
@@ -434,8 +561,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: `新项目 ${state.videoProjects.length + 1}` })
       });
-      const project = await response.json();
-      if (!response.ok) throw new Error(project.error ?? "创建项目失败");
+      const project = await readJsonOrThrow<VideoProject>(response, "创建项目失败");
       setSelectedProjectId(project.id);
       setView("generate");
       setSelectedTaskId(null);
@@ -457,8 +583,24 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name })
       });
-      const project = await response.json();
-      if (!response.ok) throw new Error(project.error ?? "重命名项目失败");
+      await readJsonOrThrow<VideoProject>(response, "重命名项目失败");
+      await refresh();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function deleteProject(projectId: string) {
+    if (!window.confirm("删除项目只会隐藏文件夹，不会删除其中的任务、视频和下载文件。")) return;
+    setBusy(`delete-project-${projectId}`);
+    setToast("");
+    try {
+      const response = await fetch(`/api/video-projects/${projectId}`, { method: "DELETE" });
+      await readJsonOrThrow<VideoProject>(response, "删除项目失败");
+      setSelectedProjectId((id) => id === projectId ? null : id);
+      setSelectedTaskId(null);
       await refresh();
     } catch (error) {
       setToast(error instanceof Error ? error.message : String(error));
@@ -473,8 +615,7 @@ function App() {
     body.set("file", file);
     try {
       const response = await fetch("/api/uploads/image", { method: "POST", body });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "上传图片失败");
+      const result = await readJsonOrThrow<{ url: string; localUrl?: string; localPath?: string }>(response, "上传图片失败");
       setSlots((items) => items.map((slot) => slot.id === slotId ? {
         ...slot,
         url: result.localUrl || result.url,
@@ -517,12 +658,13 @@ function App() {
   return (
     <main className="dream-shell">
       <ConversationRail
-        projects={state.videoProjects}
+        projects={activeProjects}
         selectedProjectId={activeProjectId}
         view={view}
         onView={setView}
         onCreateProject={createProject}
         onRenameProject={renameProject}
+        onDeleteProject={deleteProject}
         onSelectProject={(projectId) => {
           setSelectedProjectId(projectId);
           setSelectedTaskId(null);
@@ -546,8 +688,13 @@ function App() {
       {view === "assets" ? (
         <AssetLibrary tasks={generatedAssets} pollLogs={state.pollLogs} onEdit={restoreTask} onRegenerate={regenerateTask} onDelete={deleteTask} onDownloadDebug={downloadTaskDebug} />
       ) : (
-        <section className="timeline">
+        <section className="timeline" onScroll={handleTimelineScroll}>
           <div className="date-heading">5月19日</div>
+          {executorHasMore && (
+            <button className="load-history" disabled={executorLoadingOlder} onClick={loadOlderExecutorTasks}>
+              {executorLoadingOlder ? <Loader2 className="spin" size={16} /> : <RefreshCcw size={16} />}加载更早记录
+            </button>
+          )}
           {!sessionTasks.length && (
             <section className="empty-state">
               <Wand2 size={30} />
@@ -654,13 +801,14 @@ function TopFilterButton({ active, label, onClick }: { active: boolean; label: s
   return <button className={active ? "active" : ""} onClick={onClick}>{label}<ChevronDown size={14} /></button>;
 }
 
-function ConversationRail({ projects, selectedProjectId, view, onView, onCreateProject, onRenameProject, onSelectProject }: {
+function ConversationRail({ projects, selectedProjectId, view, onView, onCreateProject, onRenameProject, onDeleteProject, onSelectProject }: {
   projects: VideoProject[];
   selectedProjectId: string;
   view: "generate" | "assets";
   onView: (view: "generate" | "assets") => void;
   onCreateProject: () => void;
   onRenameProject: (projectId: string, name: string) => void;
+  onDeleteProject: (projectId: string) => void;
   onSelectProject: (projectId: string) => void;
 }) {
   return (
@@ -685,11 +833,20 @@ function ConversationRail({ projects, selectedProjectId, view, onView, onCreateP
         {projects.map((project) => {
           const selected = project.id === selectedProjectId && view === "generate";
           return (
-            <button key={project.id} className={`session-row ${selected ? "selected" : ""}`} onClick={() => onSelectProject(project.id)}>
+            <div
+              key={project.id}
+              className={`session-row ${selected ? "selected" : ""}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelectProject(project.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") onSelectProject(project.id);
+              }}
+            >
               <span className="session-thumb icon"><Folder size={18} /></span>
               <strong>{project.name}</strong>
-              <ProjectNameEditor project={project} onRename={onRenameProject} />
-            </button>
+              <ProjectNameEditor project={project} onRename={onRenameProject} onDelete={onDeleteProject} />
+            </div>
           );
         })}
       </section>
@@ -697,7 +854,7 @@ function ConversationRail({ projects, selectedProjectId, view, onView, onCreateP
   );
 }
 
-function ProjectNameEditor({ project, onRename }: { project: VideoProject; onRename: (projectId: string, name: string) => void }) {
+function ProjectNameEditor({ project, onRename, onDelete }: { project: VideoProject; onRename: (projectId: string, name: string) => void; onDelete: (projectId: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(project.name);
 
@@ -733,15 +890,29 @@ function ProjectNameEditor({ project, onRename }: { project: VideoProject; onRen
   }
 
   return (
-    <span
-      className="project-rename"
-      title="重命名项目"
-      onClick={(event) => {
-        event.stopPropagation();
-        setEditing(true);
-      }}
-    >
-      <FilePenLine size={15} />
+    <span className="project-actions">
+      <button
+        type="button"
+        className="project-rename"
+        title="重命名项目"
+        onClick={(event) => {
+          event.stopPropagation();
+          setEditing(true);
+        }}
+      >
+        <FilePenLine size={15} />
+      </button>
+      <button
+        type="button"
+        className="project-delete"
+        title="删除项目"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDelete(project.id);
+        }}
+      >
+        <Trash2 size={14} />
+      </button>
     </span>
   );
 }
@@ -1013,7 +1184,10 @@ function ManagerApp() {
   const [state, setState] = useState<AppState>(emptyState);
   const [localUsage, setLocalUsage] = useState<LocalUsageSummary | null>(null);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
-  const [managerView, setManagerView] = useState<"dashboard" | "records">("dashboard");
+  const [managerView, setManagerView] = useState<"dashboard" | "records" | "projects">("dashboard");
+  const [usageGranularity, setUsageGranularity] = useState<UsageGranularity>("day");
+  const [usageMetric, setUsageMetric] = useState<UsageMetricMode>("tokens");
+  const [cardSize, setCardSize] = useState<ProjectCardSize>("regular");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
@@ -1021,7 +1195,7 @@ function ManagerApp() {
     const headers = { "x-sts-manager-token": managerToken };
     const [settingsResult, stateResult, localUsageResult, storageResult] = await Promise.allSettled([
       fetchManagerJson<RuntimeSettings>("/api/runtime-settings", headers),
-      fetchManagerJson<AppState>("/api/state"),
+      fetchManagerJson<AppState>("/api/shell-state"),
       fetchManagerJson<LocalUsageSummary>("/api/manager/usage/local", headers),
       fetchManagerJson<StorageStats>("/api/manager/storage", headers)
     ]);
@@ -1048,8 +1222,7 @@ function ManagerApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password })
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "登录失败");
+      const result = await readJsonOrThrow<{ token: string }>(response, "登录失败");
       sessionStorage.setItem("sts-manager-auth", "true");
       sessionStorage.setItem("sts-manager-token", result.token);
       setManagerToken(result.token);
@@ -1071,8 +1244,7 @@ function ManagerApp() {
         headers: { "Content-Type": "application/json", "x-sts-manager-token": managerToken },
         body: JSON.stringify(settings)
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "保存失败");
+      const result = await readJsonOrThrow<RuntimeSettings>(response, "保存失败");
       setSettings(result);
       setMessage("运行时参数已更新");
     } catch (error) {
@@ -1090,10 +1262,27 @@ function ManagerApp() {
         method: "DELETE",
         headers: { "x-sts-manager-token": managerToken }
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "删除失败");
+      await readJsonOrThrow(response, "删除失败");
       await refreshManager();
       setMessage("记录已永久删除");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restoreProject(projectId: string) {
+    setBusy(`restore-project-${projectId}`);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/manager/video-projects/${projectId}/restore`, {
+        method: "POST",
+        headers: { "x-sts-manager-token": managerToken }
+      });
+      await readJsonOrThrow<VideoProject>(response, "恢复项目失败");
+      await refreshManager();
+      setMessage("项目已恢复");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1109,8 +1298,7 @@ function ManagerApp() {
         method: "POST",
         headers: { "x-sts-manager-token": managerToken }
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "打开视频数据库失败");
+      const result = await readJsonOrThrow<{ path: string }>(response, "打开视频数据库失败");
       setMessage(`视频数据库已打开：${result.path}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -1147,14 +1335,15 @@ function ManagerApp() {
         <div className="manager-brand"><ShieldCheck size={22} />STS Manager</div>
         <button className={managerView === "dashboard" ? "active" : ""} onClick={() => setManagerView("dashboard")}><BarChart3 size={18} />用量与配置</button>
         <button className={managerView === "records" ? "active" : ""} onClick={() => setManagerView("records")}><HardDrive size={18} />生成记录</button>
+        <button className={managerView === "projects" ? "active" : ""} onClick={() => setManagerView("projects")}><Folder size={18} />项目监控</button>
         <a href="/executor"><Sparkles size={18} />Executor</a>
         <button onClick={() => { sessionStorage.removeItem("sts-manager-auth"); sessionStorage.removeItem("sts-manager-token"); setManagerToken(""); setAuthenticated(false); }}>退出登录</button>
       </aside>
       <section className="manager-main">
         <header className="manager-header">
           <div>
-            <p>{managerView === "records" ? "全局数据库" : "实时配置"}</p>
-            <h1>{managerView === "records" ? "生成记录" : "用量检测与关键参数"}</h1>
+            <p>{managerView === "records" ? "全局数据库" : managerView === "projects" ? "项目用量" : "实时配置"}</p>
+            <h1>{managerView === "records" ? "生成记录" : managerView === "projects" ? "项目监控" : "用量检测与关键参数"}</h1>
           </div>
           {managerView === "dashboard" && <button className="manager-primary" onClick={saveSettings} disabled={!settings || busy === "settings"}>
             {busy === "settings" ? <Loader2 className="spin" size={18} /> : <Save size={18} />}保存参数
@@ -1162,6 +1351,35 @@ function ManagerApp() {
           {managerView === "records" && <button className="manager-primary" onClick={openVideoDatabase} disabled={busy === "open-database"}>
             {busy === "open-database" ? <Loader2 className="spin" size={18} /> : <Folder size={18} />}打开视频数据库
           </button>}
+          {managerView === "projects" && <div className="monitor-controls">
+            <SegmentedControl
+              value={usageGranularity}
+              options={[
+                ["hour", "小时"],
+                ["day", "每日"],
+                ["week", "每周"],
+                ["month", "每月"]
+              ]}
+              onChange={(value) => setUsageGranularity(value as UsageGranularity)}
+            />
+            <SegmentedControl
+              value={usageMetric}
+              options={[
+                ["tokens", "Token"],
+                ["cost", "费用"]
+              ]}
+              onChange={(value) => setUsageMetric(value as UsageMetricMode)}
+            />
+            <SegmentedControl
+              value={cardSize}
+              options={[
+                ["compact", "小"],
+                ["regular", "中"],
+                ["wide", "大"]
+              ]}
+              onChange={(value) => setCardSize(value as ProjectCardSize)}
+            />
+          </div>}
         </header>
         {message && <div className={`manager-message ${message.includes("失败") || message.includes("错误") ? "error" : ""}`}>{message}</div>}
         {managerView === "dashboard" ? <section className="manager-grid">
@@ -1204,8 +1422,10 @@ function ManagerApp() {
             </h2>
             <UsagePanel localUsage={localUsage} storageStats={storageStats} />
           </section>
-        </section> : (
-          <ManagerRecords tasks={state.videoTasks} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} onDownloadDebug={downloadTaskDebug} />
+        </section> : managerView === "records" ? (
+          <ManagerRecords managerToken={managerToken} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} onDownloadDebug={downloadTaskDebug} />
+        ) : (
+          <ManagerProjects projects={state.videoProjects} localUsage={localUsage} granularity={usageGranularity} metric={usageMetric} cardSize={cardSize} busy={busy} onRestoreProject={restoreProject} />
         )}
       </section>
     </main>
@@ -1227,6 +1447,18 @@ function SettingsGroup({ title, children }: { title: string; children: React.Rea
       <h3>{title}</h3>
       <div>{children}</div>
     </section>
+  );
+}
+
+function SegmentedControl({ value, options, onChange }: { value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {
+  return (
+    <div className="segmented-control">
+      {options.map(([optionValue, label]) => (
+        <button key={optionValue} className={value === optionValue ? "active" : ""} type="button" onClick={() => onChange(optionValue)}>
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -1301,35 +1533,195 @@ function formatDecimal(value: number, maximumFractionDigits = 4) {
   }).format(value);
 }
 
-function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }: { tasks: VideoTask[]; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => void; onDownloadDebug: (taskId: string) => void }) {
+function ManagerProjects({
+  projects,
+  localUsage,
+  granularity,
+  metric,
+  cardSize,
+  busy,
+  onRestoreProject
+}: {
+  projects: VideoProject[];
+  localUsage: LocalUsageSummary | null;
+  granularity: UsageGranularity;
+  metric: UsageMetricMode;
+  cardSize: ProjectCardSize;
+  busy: string;
+  onRestoreProject: (projectId: string) => void;
+}) {
+  if (!projects.length) {
+    return <section className="manager-record-empty"><Folder size={30} /><h2>暂无项目</h2><p>executor 创建的项目会出现在这里。</p></section>;
+  }
+  const usageByProject = new Map((localUsage?.projectUsage ?? []).map((item) => [item.projectId, item]));
+  return (
+    <section className={`manager-projects ${cardSize}`}>
+      {projects.map((project) => {
+        const usage = usageByProject.get(project.id) ?? emptyProjectUsage(project);
+        return (
+          <article className={`manager-project-card ${project.deletedAt ? "deleted" : ""}`} key={project.id}>
+            <div className="manager-project-title">
+              <span className="session-thumb icon"><Folder size={18} /></span>
+              <div>
+                <h2>{project.name}</h2>
+                <p>{project.deletedAt ? "已删除项目" : "正常项目"}</p>
+              </div>
+            </div>
+            <div className="manager-project-stats">
+              <span>{usage.requests} 个任务</span>
+              <span>成功 {usage.succeeded}</span>
+              <span>失败 {usage.failed}</span>
+              <span>{formatTokenNumber(usage.totalTokens)} Token</span>
+              <span>{formatCurrency(usage.estimatedCost)}</span>
+              <span>创建 {formatDate(project.createdAt)}</span>
+              <span>更新 {formatDate(project.updatedAt)}</span>
+            </div>
+            <ProjectUsageChart usage={usage} granularity={granularity} metric={metric} />
+            {project.deletedAt ? (
+              <button className="manager-primary" disabled={busy === `restore-project-${project.id}`} onClick={() => onRestoreProject(project.id)}>
+                {busy === `restore-project-${project.id}` ? <Loader2 className="spin" size={16} /> : <RefreshCcw size={16} />}恢复项目
+              </button>
+            ) : (
+              <span className="project-live-label">可在 executor 使用</span>
+            )}
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
+function emptyProjectUsage(project: VideoProject): ProjectUsageSummary {
+  return {
+    projectId: project.id,
+    projectName: project.name,
+    deletedAt: project.deletedAt,
+    requests: 0,
+    succeeded: 0,
+    failed: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCost: 0,
+    buckets: { hour: [], day: [], week: [], month: [] }
+  };
+}
+
+function ProjectUsageChart({ usage, granularity, metric }: { usage: ProjectUsageSummary; granularity: UsageGranularity; metric: UsageMetricMode }) {
+  const buckets = usage.buckets[granularity] ?? [];
+  const visibleBuckets = buckets.slice(-24);
+  const maxValue = Math.max(...visibleBuckets.map((bucket) => usageBucketValue(bucket, metric)), 0);
+  if (!visibleBuckets.length || maxValue <= 0) {
+    return (
+      <div className="project-usage-chart empty">
+        <div>暂无 {usageMetricLabel(metric)} 消耗</div>
+      </div>
+    );
+  }
+  return (
+    <div className="project-usage-chart" aria-label={`${usage.projectName} ${granularityLabel(granularity)} ${usageMetricLabel(metric)} 图表`}>
+      <div className="chart-body">
+        <div className="chart-y-axis" aria-hidden="true">
+          <span>{formatUsageMetricValue(maxValue, metric)}</span>
+          <span>{formatUsageMetricValue(maxValue / 2, metric)}</span>
+          <span>0</span>
+        </div>
+        <div className="chart-bars">
+          {visibleBuckets.map((bucket) => {
+            const value = usageBucketValue(bucket, metric);
+            const height = Math.max(6, Math.round((value / maxValue) * 100));
+            return (
+              <span key={bucket.key} className="chart-bar-wrap">
+                <span
+                  className="chart-bar"
+                  style={{ height: `${height}%` }}
+                />
+                <span className="chart-tooltip">
+                  <strong>{bucket.label}</strong>
+                  <em>{formatTokenNumber(bucket.totalTokens)} Token</em>
+                  <em>{formatCurrency(bucket.estimatedCost)}</em>
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <div className="chart-foot">
+        <span>{visibleBuckets[0]?.label}</span>
+        <strong>{formatUsageMetricValue(visibleBuckets.reduce((sum, bucket) => sum + usageBucketValue(bucket, metric), 0), metric)}</strong>
+        <span>{visibleBuckets[visibleBuckets.length - 1]?.label}</span>
+      </div>
+    </div>
+  );
+}
+
+function usageBucketValue(bucket: UsageBucket, metric: UsageMetricMode) {
+  return metric === "cost" ? bucket.estimatedCost : bucket.totalTokens;
+}
+
+function usageMetricLabel(metric: UsageMetricMode) {
+  return metric === "cost" ? "费用" : "Token";
+}
+
+function granularityLabel(granularity: UsageGranularity) {
+  if (granularity === "hour") return "小时";
+  if (granularity === "day") return "每日";
+  if (granularity === "week") return "每周";
+  return "每月";
+}
+
+function formatUsageMetricValue(value: number, metric: UsageMetricMode) {
+  return metric === "cost" ? formatCurrency(value) : `${formatTokenNumber(value)} Token`;
+}
+
+function formatTokenNumber(value: number) {
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value);
+}
+
+function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownloadDebug }: { managerToken: string; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => Promise<void> | void; onDownloadDebug: (taskId: string) => void }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | VideoTask["status"] | "hidden">("all");
   const [sort, setSort] = useState<"newest" | "oldest" | "status" | "project">("newest");
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return tasks
-      .filter((task) => {
-        if (status === "hidden" && !task.hiddenAt) return false;
-        if (status !== "all" && status !== "hidden" && task.status !== status) return false;
-        if (!normalized) return true;
-        const haystack = [
-          task.id,
-          task.remoteTaskId,
-          task.prompt,
-          task.modelVersion,
-          task.status,
-          projectName(projects, task.projectId ?? "")
-        ].filter(Boolean).join(" ").toLowerCase();
-        return haystack.includes(normalized);
-      })
-      .sort((a, b) => {
-        if (sort === "oldest") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-        if (sort === "status") return a.status.localeCompare(b.status);
-        if (sort === "project") return projectName(projects, a.projectId ?? "").localeCompare(projectName(projects, b.projectId ?? ""), "zh-CN");
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  const [records, setRecords] = useState<VideoTask[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function loadMoreManagerRecords(reset = false) {
+    if (loading || (!reset && !hasMore)) return;
+    setLoading(true);
+    try {
+      const response = await fetch(managerTasksUrl({
+        limit: 50,
+        before: reset ? undefined : nextCursor,
+        query,
+        status,
+        sort
+      }), {
+        headers: { "x-sts-manager-token": managerToken }
       });
-  }, [projects, query, sort, status, tasks]);
-  if (!tasks.length) return <section className="manager-record-empty"><Film size={30} /><h2>暂无生成记录</h2><p>所有项目的生成任务都会出现在这里。</p></section>;
+      const page = await readJsonOrThrow<VideoTaskPage>(response, "读取生成记录失败");
+      setRecords((current) => reset ? page.items : mergeTasksById(current, page.items));
+      setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setRecords([]);
+    setNextCursor(undefined);
+    setHasMore(false);
+    void loadMoreManagerRecords(true);
+  }, [managerToken, query, status, sort]);
+
+  async function handleHardDelete(taskId: string) {
+    await onHardDelete(taskId);
+    setRecords((items) => items.filter((task) => task.id !== taskId));
+  }
+
+  if (!records.length && !loading) return <section className="manager-record-empty"><Film size={30} /><h2>暂无生成记录</h2><p>所有项目的生成任务都会出现在这里。</p></section>;
   return (
     <section className="manager-records">
       <div className="manager-record-tools">
@@ -1349,17 +1741,17 @@ function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }
           <option value="project">按项目</option>
         </select>
       </div>
-      {!filtered.length && <section className="manager-record-empty compact"><Search size={24} /><h2>没有匹配记录</h2><p>换一个搜索词或筛选条件。</p></section>}
+      {!records.length && loading && <section className="manager-record-empty compact"><Loader2 className="spin" size={24} /><h2>正在读取记录</h2><p>只加载当前页，避免一次性打开全部视频。</p></section>}
       <div className="manager-record-grid">
-      {filtered.map((task) => (
+      {records.map((task) => (
         <article className={`manager-record-card ${task.status}`} key={task.id}>
           <div className="manager-record-preview">
-            {videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls preload="metadata" /> : <TaskPlaceholder status={task.status} />}
+            {videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls preload="none" /> : <TaskPlaceholder status={task.status} />}
           </div>
           <div className="manager-record-body">
             <div className="manager-record-meta">
               <span><i className={`status-dot ${task.status}`} />{task.hiddenAt ? "已隐藏" : taskStatusLabel(task)}</span>
-              <span>{projectName(projects, task.projectId ?? "")}</span>
+              <span>{projectName(projects, task.projectId ?? "")}{projects.find((project) => project.id === task.projectId)?.deletedAt ? "（已删除）" : ""}</span>
               <span>{formatDate(task.createdAt)}</span>
             </div>
             <p>{task.prompt}</p>
@@ -1369,7 +1761,7 @@ function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }
               <button className="hard-delete secondary" onClick={() => onDownloadDebug(task.id)}>
                 <Download size={15} />下载状态
               </button>
-              <button className="hard-delete" disabled={busy === `hard-delete-${task.id}`} onClick={() => onHardDelete(task.id)}>
+              <button className="hard-delete" disabled={busy === `hard-delete-${task.id}`} onClick={() => void handleHardDelete(task.id)}>
                 <Trash2 size={15} />永久删除
               </button>
             </div>
@@ -1377,6 +1769,9 @@ function ManagerRecords({ tasks, projects, busy, onHardDelete, onDownloadDebug }
         </article>
       ))}
       </div>
+      {hasMore && <button className="load-more-records" disabled={loading} onClick={() => loadMoreManagerRecords(false)}>
+        {loading ? <Loader2 className="spin" size={16} /> : <RefreshCcw size={16} />}加载更多记录
+      </button>}
     </section>
   );
 }

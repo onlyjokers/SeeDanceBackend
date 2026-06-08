@@ -59,6 +59,7 @@ export interface TokenUsage {
 export interface VideoProject {
   id: string;
   name: string;
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

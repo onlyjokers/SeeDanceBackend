@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { z } from "zod";
 import { loadConfig, publicConfig } from "./lib/config.js";
-import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createVideoTask, createVideoProject, ensureDefaultVideoProject, getRuntimeSettings, getStorageStats, hardDeleteVideoTaskRecord, hideVideoTaskRecord, renameVideoProject, updateRuntimeSettings } from "./lib/db.js";
+import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createVideoTask, createVideoProject, ensureDefaultVideoProject, getExecutorVideoTaskPage, getManagerVideoTaskPage, getRuntimeSettings, getStorageStats, hardDeleteVideoTaskRecord, hideVideoTaskRecord, renameVideoProject, restoreVideoProject, softDeleteVideoProject, updateRuntimeSettings } from "./lib/db.js";
 import { AssetsClient } from "./lib/assetsClient.js";
 import { VideoClient } from "./lib/videoClient.js";
 import { SerialTaskRunner } from "./lib/taskRunner.js";
@@ -47,6 +47,13 @@ app.get("/api/config", asyncHandler(async (_req, res) => {
 
 app.get("/api/state", (_req, res) => {
   res.json(db.data);
+});
+
+app.get("/api/shell-state", (_req, res) => {
+  res.json({
+    ...db.data,
+    videoTasks: []
+  });
 });
 
 app.get("/api/runtime-settings", asyncHandler(async (_req, res) => {
@@ -96,6 +103,19 @@ app.patch("/api/video-projects/:id", asyncHandler(async (req, res) => {
   const id = routeParam(req.params.id);
   const input = z.object({ name: z.string().min(1).max(40) }).parse(req.body);
   const project = await renameVideoProject(db, id, input.name);
+  res.json(project);
+}));
+
+app.delete("/api/video-projects/:id", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const project = await softDeleteVideoProject(db, id);
+  res.json(project);
+}));
+
+app.post("/api/manager/video-projects/:id/restore", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const id = routeParam(req.params.id);
+  const project = await restoreVideoProject(db, id);
   res.json(project);
 }));
 
@@ -215,6 +235,17 @@ app.post("/api/video-tasks", asyncHandler(async (req, res) => {
   res.json(task);
 }));
 
+app.get("/api/executor/tasks", asyncHandler(async (req, res) => {
+  const input = taskPageQuerySchema.parse(req.query);
+  res.json(getExecutorVideoTaskPage(db.data, input));
+}));
+
+app.get("/api/manager/video-tasks", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const input = managerTaskPageQuerySchema.parse(req.query);
+  res.json(getManagerVideoTaskPage(db.data, input));
+}));
+
 app.post("/api/downloads/open-folder", asyncHandler(async (_req, res) => {
   const path = await openDownloadFolder(config.downloadDir);
   res.json({ ok: true, path });
@@ -248,6 +279,10 @@ app.delete("/api/manager/video-tasks/:id", asyncHandler(async (req, res) => {
   await hardDeleteVideoTaskRecord(db, id);
   res.json({ ok: true });
 }));
+
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "API 路由不存在。" });
+});
 
 mountStaticClient(app, resolve(process.cwd(), "dist"));
 
@@ -306,6 +341,18 @@ const runtimeSettingsSchema = z.object({
   maxPollRetryCount: z.string().trim().min(1),
   maxConcurrentVideoTasks: z.string().trim().min(1),
   tokenPricePerThousand: z.string().trim().min(1)
+});
+
+const positiveLimitSchema = z.coerce.number().int().min(1).max(100).optional();
+const taskPageQuerySchema = z.object({
+  projectId: z.string().optional(),
+  limit: positiveLimitSchema,
+  before: z.string().optional()
+});
+const managerTaskPageQuerySchema = taskPageQuerySchema.extend({
+  status: z.enum(["all", "queued", "running", "succeeded", "failed", "hidden"]).optional(),
+  query: z.string().optional(),
+  sort: z.enum(["newest", "oldest", "status", "project"]).optional()
 });
 
 function isManagerRequest(req: express.Request) {

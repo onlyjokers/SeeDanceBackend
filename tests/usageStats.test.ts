@@ -86,4 +86,73 @@ describe("usage stats", () => {
     ]);
     expect(summary.totals.referenceImages).toBe(2);
   });
+
+  it("aggregates project token and cost trends by finished time buckets", () => {
+    const data: DatabaseShape = {
+      assetGroups: [],
+      assets: [],
+      pollLogs: [],
+      runtimeSettings: { tokenPricePerThousand: "0.05" } as DatabaseShape["runtimeSettings"],
+      videoProjects: [
+        { id: "p1", name: "广告", createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-05-01T00:00:00.000Z" },
+        { id: "p2", name: "已删项目", deletedAt: "2026-05-20T00:00:00.000Z", createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-05-20T00:00:00.000Z" }
+      ],
+      videoTasks: [
+        {
+          id: "t1",
+          projectId: "p1",
+          prompt: "a",
+          assetIds: [],
+          status: "succeeded",
+          tokenUsage: { inputTokens: 100, outputTokens: 900, totalTokens: 1000 },
+          createdAt: "2026-05-18T08:00:00.000Z",
+          updatedAt: "2026-05-18T10:15:00.000Z"
+        },
+        {
+          id: "t2",
+          projectId: "p1",
+          prompt: "b",
+          assetIds: [],
+          status: "failed",
+          tokenUsage: { inputTokens: 50, outputTokens: 450, totalTokens: 500 },
+          createdAt: "2026-05-18T09:00:00.000Z",
+          updatedAt: "2026-05-19T01:30:00.000Z"
+        },
+        {
+          id: "t3",
+          projectId: "p2",
+          prompt: "c",
+          assetIds: [],
+          status: "succeeded",
+          tokenUsage: { inputTokens: 20, outputTokens: 180, totalTokens: 200 },
+          createdAt: "2026-06-03T03:00:00.000Z",
+          updatedAt: "2026-06-03T04:00:00.000Z"
+        }
+      ]
+    };
+
+    const summary = summarizeLocalUsage(data);
+    const project = summary.projectUsage.find((item) => item.projectId === "p1");
+    const deletedProject = summary.projectUsage.find((item) => item.projectId === "p2");
+
+    expect(project).toMatchObject({
+      projectId: "p1",
+      projectName: "广告",
+      requests: 2,
+      failed: 1,
+      totalTokens: 1500,
+      estimatedCost: 0.08
+    });
+    expect(project?.buckets.hour.map((bucket) => [bucket.key, bucket.totalTokens, bucket.estimatedCost])).toEqual([
+      ["2026-05-18T10:00:00.000Z", 1000, 0.05],
+      ["2026-05-19T01:00:00.000Z", 500, 0.03]
+    ]);
+    expect(project?.buckets.day.map((bucket) => [bucket.key, bucket.totalTokens])).toEqual([
+      ["2026-05-18", 1000],
+      ["2026-05-19", 500]
+    ]);
+    expect(project?.buckets.week.map((bucket) => [bucket.label, bucket.totalTokens])).toEqual([["2026-W21", 1500]]);
+    expect(project?.buckets.month.map((bucket) => [bucket.label, bucket.totalTokens])).toEqual([["2026-05", 1500]]);
+    expect(deletedProject).toMatchObject({ projectId: "p2", projectName: "已删项目", deletedAt: "2026-05-20T00:00:00.000Z", totalTokens: 200 });
+  });
 });
