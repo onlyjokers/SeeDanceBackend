@@ -6,8 +6,12 @@ describe("API contract", () => {
     expect(apiV1Prefix).toBe("/api/v1");
     expect(apiV1Paths.config).toBe("/api/v1/config");
     expect(apiV1Paths.projects).toBe("/api/v1/projects");
+    expect(apiV1Paths.project("project 1")).toBe("/api/v1/projects/project%201");
+    expect(apiV1Paths.managerProjectRestore("project 1")).toBe("/api/v1/manager/projects/project%201/restore");
     expect(apiV1Paths.generationTasks).toBe("/api/v1/generation-tasks");
     expect(apiV1Paths.uploadImages).toBe("/api/v1/uploads/images");
+    expect(apiV1Paths.uploadLocal("ref 1.png")).toBe("/api/v1/uploads/local/ref%201.png");
+    expect(apiV1Paths.downloadsOpenFolder).toBe("/api/v1/downloads/open-folder");
     expect(apiV1Paths.managerLogin).toBe("/api/v1/manager/login");
     expect(apiV1Paths.managerSettings).toBe("/api/v1/manager/settings");
     expect(apiV1Paths.managerUsage).toBe("/api/v1/manager/usage");

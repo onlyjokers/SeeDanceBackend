@@ -154,6 +154,13 @@ app.delete("/api/v1/projects/:id", asyncHandler(async (req, res) => {
   res.json(project);
 }));
 
+app.post("/api/v1/manager/projects/:id/restore", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const id = routeParam(req.params.id);
+  const project = await restoreVideoProject(db, id);
+  res.json(project);
+}));
+
 app.post("/api/v1/generation-tasks", asyncHandler(async (req, res) => {
   return submitGenerationTask(req, res);
 }));
@@ -208,6 +215,18 @@ app.post("/api/v1/uploads/images", asyncHandler(async (req, res) => {
     maxRetries: retryCountFromSettings(settings)
   });
   res.json({ ...uploaded, localPath: local.path, localUrl: local.url });
+}));
+
+app.get("/api/v1/uploads/local/:name", asyncHandler(async (req, res) => {
+  const name = basename(routeParam(req.params.name));
+  const settings = await getRuntimeSettings(db, config);
+  const path = resolveLocalUploadPath(settings.uploadDir || config.uploadDir, name);
+  res.sendFile(path);
+}));
+
+app.post("/api/v1/downloads/open-folder", asyncHandler(async (_req, res) => {
+  const path = await openDownloadFolder(config.downloadDir);
+  res.json({ ok: true, path });
 }));
 
 app.post("/api/v1/manager/login", asyncHandler(async (req, res) => {
