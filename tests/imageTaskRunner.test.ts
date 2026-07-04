@@ -34,7 +34,8 @@ const config: AppConfig = {
   imageTokenPricePerThousand: 0.049085,
   image2APIKey: "image-key",
   image2APIURL: "https://www.cctq.ai/v1/chat/completions",
-  image2Model: "gpt-image-2"
+  image2Model: "gpt-image-2",
+  corsOrigin: ""
 };
 
 describe("ImageTaskRunner", () => {

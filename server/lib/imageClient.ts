@@ -165,6 +165,8 @@ export async function buildImageEditFormData(input: ImageGenerationInput, model:
   for (const [key, value] of Object.entries(payload)) {
     formData.set(key, String(value));
   }
+  formData.set("model_name", model);
+  formData.set("modelName", model);
   for (const [index, imageUrl] of imageUrls.entries()) {
     const file = await fetchReferenceImage(imageUrl, index);
     formData.append("image[]", file.blob, file.filename);

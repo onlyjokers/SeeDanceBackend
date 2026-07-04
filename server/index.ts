@@ -35,6 +35,15 @@ const imageRunner = new ImageTaskRunner(db, imageClient, config, () => getRuntim
 const app = express();
 const managerToken = "sts-manager-session";
 
+app.use((req, res, next) => {
+  if (!config.corsOrigin) return next();
+  res.setHeader("Access-Control-Allow-Origin", config.corsOrigin);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-sts-manager-token");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  return next();
+});
+
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/config", asyncHandler(async (_req, res) => {
@@ -98,6 +107,157 @@ app.post("/api/manager/login", asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "账号或密码错误。" });
   }
   res.json({ ok: true, token: managerToken });
+}));
+
+app.get("/api/v1/config", asyncHandler(async (_req, res) => {
+  const settings = await getRuntimeSettings(db, config);
+  res.json({
+    ...publicConfig(config),
+    arkAPIKeyConfigured: Boolean(settings.arkAPIKey),
+    arkVideoModel: settings.arkVideoModel,
+    arkBaseURL: settings.arkBaseURL,
+    imageHostURL: settings.imageHostURL,
+    image2APIKeyConfigured: Boolean(settings.image2APIKey),
+    image2APIURL: settings.image2APIURL,
+    image2Model: settings.image2Model,
+    assetsCredentialsConfigured: Boolean(settings.volcengineAK && settings.volcengineSK)
+  });
+}));
+
+app.get("/api/v1/shell-state", (_req, res) => {
+  res.json({
+    ...db.data,
+    videoTasks: []
+  });
+});
+
+app.get("/api/v1/projects", (_req, res) => {
+  res.json(db.data.videoProjects);
+});
+
+app.post("/api/v1/projects", asyncHandler(async (req, res) => {
+  const input = z.object({ name: z.string().min(1).max(40) }).parse(req.body);
+  const project = await createVideoProject(db, input.name);
+  res.json(project);
+}));
+
+app.patch("/api/v1/projects/:id", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const input = z.object({ name: z.string().min(1).max(40) }).parse(req.body);
+  const project = await renameVideoProject(db, id, input.name);
+  res.json(project);
+}));
+
+app.delete("/api/v1/projects/:id", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const project = await softDeleteVideoProject(db, id);
+  res.json(project);
+}));
+
+app.post("/api/v1/generation-tasks", asyncHandler(async (req, res) => {
+  return submitGenerationTask(req, res);
+}));
+
+app.get("/api/v1/generation-tasks", asyncHandler(async (req, res) => {
+  const input = taskPageQuerySchema.parse(req.query);
+  res.json(getExecutorVideoTaskPage(db.data, input));
+}));
+
+app.get("/api/v1/generation-tasks/:id", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const task = db.data.videoTasks.find((item) => item.id === id);
+  if (!task || task.hiddenAt) return res.status(404).json({ error: "生成任务不存在。" });
+  res.json(task);
+}));
+
+app.delete("/api/v1/generation-tasks/:id", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  await hideVideoTaskRecord(db, id);
+  res.json({ ok: true });
+}));
+
+app.get("/api/v1/generation-tasks/:id/debug", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const debugExport = buildTaskDebugExport(db.data, id);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="seendance-task-${id}-debug.json"`);
+  res.send(JSON.stringify(debugExport, null, 2));
+}));
+
+app.get("/api/v1/generation-tasks/:id/file/:index", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const task = db.data.videoTasks.find((item) => item.id === id);
+  if (!task) return res.status(404).json({ error: "生成任务不存在。" });
+  if (mediaTypeOf(task) === "video") {
+    if (routeParam(req.params.index) !== "0") return res.status(404).json({ error: "视频任务只有一个文件。" });
+    const path = getDownloadPathForTask(task);
+    return res.download(path);
+  }
+  const index = Number(routeParam(req.params.index));
+  const path = Number.isInteger(index) ? task.imageDownloadPaths?.[index] : undefined;
+  if (!path) return res.status(404).json({ error: "这个图片任务还没有对应的本地文件。" });
+  return res.sendFile(resolve(path));
+}));
+
+app.post("/api/v1/uploads/images", asyncHandler(async (req, res) => {
+  const file = await fileFromMultipartRequest(req);
+  if (!file.type.startsWith("image/")) return res.status(400).json({ error: "只支持上传图片文件。" });
+  const settings = await getRuntimeSettings(db, config);
+  const local = await saveUploadedImageLocally(file, settings.uploadDir || config.uploadDir);
+  const uploaded = await uploadImageToTemporaryHost(file, settings.imageHostURL, fetch, {
+    maxRetries: retryCountFromSettings(settings)
+  });
+  res.json({ ...uploaded, localPath: local.path, localUrl: local.url });
+}));
+
+app.post("/api/v1/manager/login", asyncHandler(async (req, res) => {
+  const input = z.object({
+    username: z.string(),
+    password: z.string()
+  }).parse(req.body);
+  if (input.username !== "STS" || input.password !== "Sts123456") {
+    return res.status(401).json({ error: "账号或密码错误。" });
+  }
+  res.json({ ok: true, token: managerToken });
+}));
+
+app.get("/api/v1/manager/settings", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await getRuntimeSettings(db, config));
+}));
+
+app.patch("/api/v1/manager/settings", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const input = runtimeSettingsSchema.parse(req.body);
+  res.json(await updateRuntimeSettings(db, input));
+}));
+
+app.get("/api/v1/manager/usage", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(summarizeLocalUsage(db.data));
+}));
+
+app.get("/api/v1/manager/storage", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await getStorageStats(db, {
+    databasePath: config.databasePath,
+    sqlitePath: config.sqlitePath,
+    downloadDir: config.downloadDir,
+    uploadDir: config.uploadDir
+  }));
+}));
+
+app.get("/api/v1/manager/generation-tasks", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const input = managerTaskPageQuerySchema.parse(req.query);
+  res.json(getManagerVideoTaskPage(db.data, input));
+}));
+
+app.delete("/api/v1/manager/generation-tasks/:id", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const id = routeParam(req.params.id);
+  await hardDeleteVideoTaskRecord(db, id);
+  res.json({ ok: true });
 }));
 
 app.post("/api/video-projects", asyncHandler(async (req, res) => {
@@ -455,6 +615,49 @@ const managerTaskPageQuerySchema = taskPageQuerySchema.extend({
 
 function isManagerRequest(req: express.Request) {
   return req.headers["x-sts-manager-token"] === managerToken;
+}
+
+async function submitGenerationTask(req: express.Request, res: express.Response) {
+  if (req.body?.mediaType === "image") {
+    const input = parseImageTaskRequest(req.body);
+    await getRuntimeSettings(db, config);
+    const task = await createImageTask(db, input);
+    imageRunner.enqueue(task.id, async (context) => {
+      const settings = await getRuntimeSettings(db, config);
+      const refreshed = await refreshTemporaryReferences(input.references, settings, context);
+      const references = await prepareImageReferences(refreshed);
+      return imageClient.generate({
+        prompt: input.prompt,
+        ratio: input.ratio,
+        imageResolution: input.imageResolution,
+        imageQuality: input.imageQuality,
+        size: input.size,
+        imageModel: input.imageModel,
+        references
+      });
+    });
+    return res.json(task);
+  }
+
+  const input = parseVideoTaskRequest({ ...req.body, mediaType: "video" });
+  const task = await createVideoTask(db, input, input.references.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
+  runner.enqueue(task.id, async (context) => {
+    const settings = await getRuntimeSettings(db, config);
+    const refreshedInputReferences = await refreshTemporaryReferences(input.references, settings, context);
+    const references = input.referenceTransport === "asset"
+      ? await prepareAssetReferences(refreshedInputReferences, settings, context)
+      : refreshedInputReferences;
+    return videoClient.createTask({
+      modelVersion: input.modelVersion,
+      prompt: input.prompt,
+      mode: input.mode,
+      ratio: input.ratio,
+      duration: input.duration,
+      resolution: input.resolution,
+      references
+    });
+  });
+  return res.json(task);
 }
 
 async function prepareAssetReferences(references: VideoReferenceInput[], settings: RuntimeSettings, context?: TaskRunContext) {

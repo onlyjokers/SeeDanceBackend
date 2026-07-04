@@ -29,7 +29,8 @@ const config: AppConfig = {
   pollTimeoutMs: 1000,
   maxPollRetryCount: 5,
   maxConcurrentVideoTasks: 3,
-  tokenPricePerThousand: 0.049085
+  tokenPricePerThousand: 0.049085,
+  corsOrigin: ""
 };
 
 describe("SerialTaskRunner", () => {

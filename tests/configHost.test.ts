@@ -8,6 +8,7 @@ describe("server host binding", () => {
   const originalMaxPollRetryCount = process.env.MAX_POLL_RETRY_COUNT;
   const originalMaxConcurrentVideoTasks = process.env.MAX_CONCURRENT_VIDEO_TASKS;
   const originalTokenPricePerThousand = process.env.TOKEN_PRICE_PER_THOUSAND;
+  const originalCorsOrigin = process.env.CORS_ORIGIN;
 
   afterEach(() => {
     if (originalAssetProjectName === undefined) delete process.env.ASSET_PROJECT_NAME;
@@ -22,6 +23,8 @@ describe("server host binding", () => {
     else process.env.MAX_CONCURRENT_VIDEO_TASKS = originalMaxConcurrentVideoTasks;
     if (originalTokenPricePerThousand === undefined) delete process.env.TOKEN_PRICE_PER_THOUSAND;
     else process.env.TOKEN_PRICE_PER_THOUSAND = originalTokenPricePerThousand;
+    if (originalCorsOrigin === undefined) delete process.env.CORS_ORIGIN;
+    else process.env.CORS_ORIGIN = originalCorsOrigin;
   });
 
   it("defaults to 0.0.0.0 so the app can be reached from the LAN", () => {
@@ -116,5 +119,21 @@ describe("server host binding", () => {
     const config = loadConfig();
 
     expect(config.tokenPricePerThousand).toBe(0.05);
+  });
+
+  it("does not enable cross-origin frontend access unless configured", () => {
+    delete process.env.CORS_ORIGIN;
+
+    const config = loadConfig();
+
+    expect(config.corsOrigin).toBe("");
+  });
+
+  it("allows the separate frontend origin to be configured", () => {
+    process.env.CORS_ORIGIN = "http://127.0.0.1:5173";
+
+    const config = loadConfig();
+
+    expect(config.corsOrigin).toBe("http://127.0.0.1:5173");
   });
 });

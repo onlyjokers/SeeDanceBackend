@@ -30,7 +30,8 @@ const config: AppConfig = {
   pollTimeoutMs: 10000,
   maxPollRetryCount: 5,
   maxConcurrentVideoTasks: 100,
-  tokenPricePerThousand: 0.049085
+  tokenPricePerThousand: 0.049085,
+  corsOrigin: ""
 };
 
 describe("AssetsClient ProjectName handling", () => {

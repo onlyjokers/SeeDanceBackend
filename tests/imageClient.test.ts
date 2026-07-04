@@ -28,7 +28,8 @@ const config: AppConfig = {
   imageTokenPricePerThousand: 0.049085,
   image2APIKey: "image-key",
   image2APIURL: "https://www.cctq.ai/v1/chat/completions",
-  image2Model: "gpt-image-2"
+  image2Model: "gpt-image-2",
+  corsOrigin: ""
 };
 
 const runtimeSettings: RuntimeSettings = {
@@ -108,6 +109,8 @@ describe("ImageClient", () => {
     expect(body).toBeInstanceOf(FormData);
     const formData = body as FormData;
     expect(formData.get("model")).toBe("gpt-image-2");
+    expect(formData.get("model_name")).toBe("gpt-image-2");
+    expect(formData.get("modelName")).toBe("gpt-image-2");
     expect(formData.get("prompt")).toBe("生成一张产品图");
     expect(formData.get("size")).toBe("2048x2048");
     expect(formData.get("quality")).toBe("medium");

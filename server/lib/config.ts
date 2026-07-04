@@ -27,6 +27,7 @@ export interface AppConfig {
   image2APIURL?: string;
   image2Model?: string;
   uploadDir: string;
+  corsOrigin: string;
 }
 
 export function loadConfig(): AppConfig {
@@ -55,7 +56,8 @@ export function loadConfig(): AppConfig {
     image2APIKey: process.env.IMAGE2_API_KEY || "",
     image2APIURL: normalizeImage2APIURL(process.env.IMAGE2_API_URL || "https://www.cctq.ai/v1/images/generations"),
     image2Model: normalizeImage2Model(process.env.IMAGE2_MODEL || "gpt-image-2"),
-    uploadDir: process.env.UPLOAD_DIR || "data/uploads"
+    uploadDir: process.env.UPLOAD_DIR || "data/uploads",
+    corsOrigin: process.env.CORS_ORIGIN || ""
   };
 }
 
@@ -80,6 +82,7 @@ export function publicConfig(config: AppConfig) {
     image2APIURL: normalizeImage2APIURL(config.image2APIURL ?? "https://www.cctq.ai/v1/images/generations"),
     image2Model: normalizeImage2Model(config.image2Model ?? "gpt-image-2"),
     uploadDir: config.uploadDir,
+    corsOrigin: config.corsOrigin,
     sqlitePath: config.sqlitePath
   };
 }

@@ -23,7 +23,8 @@ const config: AppConfig = {
   pollTimeoutMs: 3600000,
   maxPollRetryCount: 5,
   maxConcurrentVideoTasks: 100,
-  tokenPricePerThousand: 0.049085
+  tokenPricePerThousand: 0.049085,
+  corsOrigin: ""
 };
 
 const runtimeSettings: RuntimeSettings = {
