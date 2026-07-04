@@ -36,6 +36,7 @@ describe("SQLite persistence", () => {
     const db = await openDB(jsonPath, sqlitePath);
 
     expect(db.data.videoTasks).toHaveLength(1);
+    expect(db.data.videoTasks[0]?.mediaType).toBe("video");
     expect(db.data.videoTasks[0]?.tokenUsage).toEqual({ inputTokens: 1, outputTokens: 2, totalTokens: 3 });
     expect(db.data.pollLogs[0]?.raw).toEqual({ ok: true });
     expect(await readFile(jsonPath, "utf8")).toBe(before);
@@ -90,6 +91,7 @@ describe("SQLite persistence", () => {
 
     expect(stats.tasks.total).toBe(1);
     expect(stats.tasks.generatedVideos).toBe(1);
+    expect(stats.tasks.generatedImages).toBe(0);
     expect(stats.files.downloadBytes).toBe(4);
     expect(stats.files.uploadBytes).toBe(2);
     expect(stats.files.totalBytes).toBeGreaterThanOrEqual(6);

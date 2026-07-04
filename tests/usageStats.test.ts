@@ -155,4 +155,57 @@ describe("usage stats", () => {
     expect(project?.buckets.month.map((bucket) => [bucket.label, bucket.totalTokens])).toEqual([["2026-05", 1500]]);
     expect(deletedProject).toMatchObject({ projectId: "p2", projectName: "已删项目", deletedAt: "2026-05-20T00:00:00.000Z", totalTokens: 200 });
   });
+
+  it("separates video and image usage while preserving project totals", () => {
+    const data: DatabaseShape = {
+      assetGroups: [],
+      assets: [],
+      pollLogs: [],
+      runtimeSettings: { tokenPricePerThousand: "0.05", imageTokenPricePerThousand: "0.10" } as DatabaseShape["runtimeSettings"],
+      videoProjects: [
+        { id: "p1", name: "混合项目", createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-05-01T00:00:00.000Z" }
+      ],
+      videoTasks: [
+        {
+          id: "v1",
+          mediaType: "video",
+          projectId: "p1",
+          prompt: "video",
+          assetIds: [],
+          status: "succeeded",
+          tokenUsage: { inputTokens: 10, outputTokens: 90, totalTokens: 100 },
+          downloadPath: "/tmp/video.mp4",
+          createdAt: "2026-05-18T08:00:00.000Z",
+          updatedAt: "2026-05-18T08:30:00.000Z"
+        },
+        {
+          id: "i1",
+          mediaType: "image",
+          projectId: "p1",
+          prompt: "image",
+          assetIds: [],
+          status: "succeeded",
+          tokenUsage: { inputTokens: 20, outputTokens: 180, totalTokens: 200 },
+          imageDownloadPaths: ["/tmp/image.png"],
+          imageModel: "image2",
+          createdAt: "2026-05-18T09:00:00.000Z",
+          updatedAt: "2026-05-18T09:30:00.000Z"
+        }
+      ]
+    };
+
+    const summary = summarizeLocalUsage(data);
+    const project = summary.projectUsage.find((item) => item.projectId === "p1");
+
+    expect(summary.totals.videos).toBe(1);
+    expect(summary.totals.images).toBe(1);
+    expect(summary.totals.downloadedVideos).toBe(1);
+    expect(summary.totals.downloadedImages).toBe(1);
+    expect(summary.byMediaType.video.totalTokens).toBe(100);
+    expect(summary.byMediaType.image.totalTokens).toBe(200);
+    expect(summary.byMediaType.image.estimatedCost).toBe(0.02);
+    expect(project?.totalTokens).toBe(300);
+    expect(project?.mediaTypes.image.requests).toBe(1);
+    expect(project?.bucketsByMediaType.image.day[0]).toMatchObject({ totalTokens: 200 });
+  });
 });

@@ -20,7 +20,12 @@ export interface AppConfig {
   pollTimeoutMs: number;
   maxPollRetryCount: number;
   maxConcurrentVideoTasks: number;
+  maxConcurrentImageTasks?: number;
   tokenPricePerThousand: number;
+  imageTokenPricePerThousand?: number;
+  image2APIKey?: string;
+  image2APIURL?: string;
+  image2Model?: string;
   uploadDir: string;
 }
 
@@ -44,7 +49,12 @@ export function loadConfig(): AppConfig {
     pollTimeoutMs: numberEnv("POLL_TIMEOUT_SECONDS", 3600) * 1000,
     maxPollRetryCount: integerEnv("MAX_POLL_RETRY_COUNT", 5),
     maxConcurrentVideoTasks: integerEnv("MAX_CONCURRENT_VIDEO_TASKS", 100),
+    maxConcurrentImageTasks: integerEnv("MAX_CONCURRENT_IMAGE_TASKS", 8),
     tokenPricePerThousand: numberEnv("TOKEN_PRICE_PER_THOUSAND", 0.049085),
+    imageTokenPricePerThousand: numberEnv("IMAGE_TOKEN_PRICE_PER_THOUSAND", numberEnv("TOKEN_PRICE_PER_THOUSAND", 0.049085)),
+    image2APIKey: process.env.IMAGE2_API_KEY || "",
+    image2APIURL: normalizeImage2APIURL(process.env.IMAGE2_API_URL || "https://www.cctq.ai/v1/images/generations"),
+    image2Model: normalizeImage2Model(process.env.IMAGE2_MODEL || "gpt-image-2"),
     uploadDir: process.env.UPLOAD_DIR || "data/uploads"
   };
 }
@@ -63,7 +73,12 @@ export function publicConfig(config: AppConfig) {
     pollTimeoutSeconds: config.pollTimeoutMs / 1000,
     maxPollRetryCount: config.maxPollRetryCount,
     maxConcurrentVideoTasks: config.maxConcurrentVideoTasks,
+    maxConcurrentImageTasks: config.maxConcurrentImageTasks ?? 8,
     tokenPricePerThousand: config.tokenPricePerThousand,
+    imageTokenPricePerThousand: config.imageTokenPricePerThousand ?? config.tokenPricePerThousand,
+    image2APIKeyConfigured: Boolean(config.image2APIKey),
+    image2APIURL: normalizeImage2APIURL(config.image2APIURL ?? "https://www.cctq.ai/v1/images/generations"),
+    image2Model: normalizeImage2Model(config.image2Model ?? "gpt-image-2"),
     uploadDir: config.uploadDir,
     sqlitePath: config.sqlitePath
   };
@@ -87,4 +102,22 @@ function sqlitePathFromJsonPath(path: string) {
   const ext = extname(path);
   const name = ext ? basename(path, ext) : basename(path);
   return join(dirname(path), `${name}.sqlite`);
+}
+
+export function normalizeImage2Model(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "image2") return "gpt-image-2";
+  if (trimmed === "image2-pro") return "gpt-image-2-pro";
+  return trimmed;
+}
+
+export function normalizeImage2APIURL(value: string) {
+  const trimmed = value.trim() || "https://www.cctq.ai/v1/images/generations";
+  return trimmed
+    .replace(/\/v1\/chat\/completions\/?$/, "/v1/images/generations")
+    .replace(/\/v1\/images\/edits\/?$/, "/v1/images/generations");
+}
+
+export function normalizeImage2EditAPIURL(value: string) {
+  return normalizeImage2APIURL(value).replace(/\/v1\/images\/generations\/?$/, "/v1/images/edits");
 }

@@ -1,10 +1,11 @@
 import { access, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { AppConfig } from "./config.js";
+import { normalizeImage2APIURL, normalizeImage2Model, type AppConfig } from "./config.js";
 import { nonBlankRuntimeSettings, runtimeSettingsFromConfig, trimRuntimeSettings } from "./runtimeSettings.js";
 import type { Asset, AssetGroup, DatabaseShape, PollLog, RuntimeSettings, StorageStats, VideoProject, VideoTask } from "../types.js";
-import type { VideoTaskRequest } from "./requestSchemas.js";
+import type { ImageTaskRequest, VideoTaskRequest } from "./requestSchemas.js";
+import { imageRatios, imageResolutions, imageSizeOptionForSize, resolveImageSize, type ImageRatio, type ImageResolution, type MediaType } from "./payloads.js";
 
 const defaultData: DatabaseShape = {
   assetGroups: [],
@@ -34,7 +35,12 @@ export const defaultRuntimeSettings: RuntimeSettings = {
   pollTimeoutSeconds: "3600",
   maxPollRetryCount: "5",
   maxConcurrentVideoTasks: "100",
-  tokenPricePerThousand: "0.049085"
+  maxConcurrentImageTasks: "8",
+  tokenPricePerThousand: "0.049085",
+  imageTokenPricePerThousand: "0.049085",
+  image2APIKey: "",
+  image2APIURL: "https://www.cctq.ai/v1/images/generations",
+  image2Model: "gpt-image-2"
 };
 
 type DatabaseUpdater = (data: DatabaseShape) => void | Promise<void>;
@@ -76,7 +82,10 @@ export async function getRuntimeSettings(db: AppDB, config: AppConfig): Promise<
     ...runtimeSettingsFromConfig(config),
     ...storedSettings
   };
-  if (!db.data.runtimeSettings || storedSettings.pollTimeoutSeconds !== originalStoredSettings.pollTimeoutSeconds) {
+  const needsSettingsMigration = storedSettings.pollTimeoutSeconds !== originalStoredSettings.pollTimeoutSeconds
+    || storedSettings.image2APIURL !== originalStoredSettings.image2APIURL
+    || storedSettings.image2Model !== originalStoredSettings.image2Model;
+  if (!db.data.runtimeSettings || needsSettingsMigration) {
     await updateRuntimeSettings(db, settings);
   }
   return settings;
@@ -88,6 +97,8 @@ function migrateRuntimeSettingsDefaults(settings: Partial<RuntimeSettings>, conf
   if (next.pollTimeoutSeconds === "900" || next.pollTimeoutSeconds === "1800") {
     next.pollTimeoutSeconds = envTimeout;
   }
+  if (next.image2APIURL) next.image2APIURL = normalizeImage2APIURL(next.image2APIURL);
+  if (next.image2Model) next.image2Model = normalizeImage2Model(next.image2Model);
   return next;
 }
 
@@ -97,6 +108,8 @@ export async function updateRuntimeSettings(db: AppDB, patch: Partial<RuntimeSet
     ...(db.data.runtimeSettings ?? {}),
     ...trimRuntimeSettings(patch)
   };
+  next.image2APIURL = normalizeImage2APIURL(next.image2APIURL ?? "https://www.cctq.ai/v1/images/generations");
+  next.image2Model = normalizeImage2Model(next.image2Model ?? "gpt-image-2");
   await db.update((data) => {
     data.runtimeSettings = next;
   });
@@ -217,6 +230,8 @@ export async function createVideoTask(db: AppDB, input: VideoTaskRequest, assetI
     : await ensureDefaultVideoProject(db);
   const task: VideoTask = {
     id: crypto.randomUUID(),
+    mediaType: "video",
+    provider: "seedance",
     projectId: project.id,
     prompt: input.prompt,
     assetIds,
@@ -227,6 +242,35 @@ export async function createVideoTask(db: AppDB, input: VideoTaskRequest, assetI
     duration: input.duration,
     resolution: input.resolution,
     references: input.references,
+    status: "queued",
+    createdAt: now,
+    updatedAt: now
+  };
+  await db.update((data) => {
+    data.videoTasks.unshift(task);
+  });
+  return task;
+}
+
+export async function createImageTask(db: AppDB, input: ImageTaskRequest): Promise<VideoTask> {
+  const now = new Date().toISOString();
+  const project = input.projectId
+    ? db.data.videoProjects.find((item) => item.id === input.projectId && !item.deletedAt) ?? await ensureDefaultVideoProject(db)
+    : await ensureDefaultVideoProject(db);
+  const task: VideoTask = {
+    id: crypto.randomUUID(),
+    mediaType: "image",
+    provider: "image2",
+    projectId: project.id,
+    prompt: input.prompt,
+    assetIds: input.references.flatMap((reference) => reference.assetId ? [reference.assetId] : []),
+    referenceTransport: input.referenceTransport,
+    ratio: input.ratio,
+    imageResolution: input.imageResolution,
+    imageQuality: input.imageQuality,
+    imageSize: input.size ?? resolveImageSize(input.ratio, input.imageResolution),
+    references: input.references,
+    imageModel: input.imageModel || db.data.runtimeSettings?.image2Model || defaultRuntimeSettings.image2Model,
     status: "queued",
     createdAt: now,
     updatedAt: now
@@ -262,6 +306,7 @@ export function getExecutorVideoProjects(data: DatabaseShape) {
 
 export interface VideoTaskPageInput {
   projectId?: string;
+  mediaType?: "all" | MediaType;
   limit?: number;
   before?: string;
   status?: "all" | VideoTask["status"] | "hidden";
@@ -281,6 +326,7 @@ export function getExecutorVideoTaskPage(data: DatabaseShape, input: VideoTaskPa
   const tasks = data.videoTasks
     .filter((task) => !task.hiddenAt && (!task.projectId || activeProjectIds.has(task.projectId)))
     .filter((task) => !projectId || task.projectId === projectId)
+    .filter((task) => !input.mediaType || input.mediaType === "all" || mediaTypeOf(task) === input.mediaType)
     .sort(compareTasksNewest);
   return paginateTasks(tasks, input.limit, input.before);
 }
@@ -291,6 +337,7 @@ export function getManagerVideoTaskPage(data: DatabaseShape, input: VideoTaskPag
   const tasks = data.videoTasks
     .filter((task) => {
       if (input.projectId && task.projectId !== input.projectId) return false;
+      if (input.mediaType && input.mediaType !== "all" && mediaTypeOf(task) !== input.mediaType) return false;
       if (input.status === "hidden" && !task.hiddenAt) return false;
       if (input.status && input.status !== "all" && input.status !== "hidden" && task.status !== input.status) return false;
       if (!normalizedQuery) return true;
@@ -299,6 +346,8 @@ export function getManagerVideoTaskPage(data: DatabaseShape, input: VideoTaskPag
         task.remoteTaskId,
         task.prompt,
         task.modelVersion,
+        task.imageModel,
+        mediaTypeOf(task),
         task.status,
         projectNames.get(task.projectId ?? "")
       ].filter(Boolean).join(" ").toLowerCase();
@@ -404,8 +453,10 @@ export async function getStorageStats(
       visible: db.data.videoTasks.filter((task) => !task.hiddenAt).length,
       hidden: db.data.videoTasks.filter((task) => task.hiddenAt).length,
       ...byStatus,
-      generatedVideos: db.data.videoTasks.filter((task) => task.videoUrl || task.downloadPath).length,
-      downloadedVideos: db.data.videoTasks.filter((task) => task.downloadPath).length
+      generatedVideos: db.data.videoTasks.filter((task) => mediaTypeOf(task) === "video" && (task.videoUrl || task.downloadPath)).length,
+      downloadedVideos: db.data.videoTasks.filter((task) => mediaTypeOf(task) === "video" && task.downloadPath).length,
+      generatedImages: db.data.videoTasks.filter((task) => mediaTypeOf(task) === "image" && ((task.imageUrls?.length ?? 0) > 0 || (task.imageDownloadPaths?.length ?? 0) > 0)).length,
+      downloadedImages: db.data.videoTasks.filter((task) => mediaTypeOf(task) === "image" && (task.imageDownloadPaths?.length ?? 0) > 0).length
     }
   };
 }
@@ -455,10 +506,38 @@ function normalizeData(data: Partial<DatabaseShape>): DatabaseShape {
     assetGroups: data.assetGroups ?? [],
     assets: data.assets ?? [],
     videoProjects: data.videoProjects ?? [],
-    videoTasks: data.videoTasks ?? [],
+    videoTasks: (data.videoTasks ?? []).map(normalizeTask),
     pollLogs: data.pollLogs ?? [],
     runtimeSettings: data.runtimeSettings
   };
+}
+
+function normalizeTask(task: VideoTask): VideoTask {
+  const normalized: VideoTask = {
+    mediaType: "video",
+    ...task
+  };
+  if (mediaTypeOf(normalized) === "image") {
+    const legacySize = imageSizeOptionForSize(normalized.imageSize);
+    const existingResolution = imageResolutions.includes(normalized.imageResolution as ImageResolution)
+      ? normalized.imageResolution as ImageResolution
+      : undefined;
+    normalized.ratio ??= legacySize?.ratio ?? "1:1";
+    normalized.imageResolution = existingResolution ?? legacySize?.resolution ?? "1k";
+    normalized.imageQuality ??= "auto";
+    if (isImageRatio(normalized.ratio)) {
+      normalized.imageSize ??= resolveImageSize(normalized.ratio, normalized.imageResolution);
+    }
+  }
+  return normalized;
+}
+
+function isImageRatio(value: unknown): value is ImageRatio {
+  return imageRatios.includes(value as ImageRatio);
+}
+
+export function mediaTypeOf(task: Pick<VideoTask, "mediaType">): MediaType {
+  return task.mediaType === "image" ? "image" : "video";
 }
 
 async function fileSize(path: string) {

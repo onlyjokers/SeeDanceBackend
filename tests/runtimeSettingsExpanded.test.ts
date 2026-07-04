@@ -118,6 +118,20 @@ describe("expanded runtime settings", () => {
       uploadDir: "data/uploads"
     });
   });
+
+  it("upgrades legacy image2 model and chat completions endpoint settings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "seendance-settings-"));
+    const db = await openDB(join(dir, "db.json"));
+    await updateRuntimeSettings(db, {
+      image2APIURL: "https://www.cctq.ai/v1/chat/completions",
+      image2Model: "image2"
+    });
+
+    await expect(getRuntimeSettings(db, config)).resolves.toMatchObject({
+      image2APIURL: "https://www.cctq.ai/v1/images/generations",
+      image2Model: "gpt-image-2"
+    });
+  });
 });
 
 function awaitableRuntimeSettingsFallback() {

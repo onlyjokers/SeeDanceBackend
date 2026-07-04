@@ -35,15 +35,23 @@ import {
 import "./styles.css";
 
 type AssetType = "Image" | "Video" | "Audio";
+type MediaType = "video" | "image";
 type VideoMode = "multimodal" | "frames";
 type ReferenceTransport = "asset" | "url";
 type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";
+type ImageModelVersion = "gpt-image-2" | "gpt-image-2-pro";
 type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
+type ImageRatio = "2:1" | "16:9" | "3:2" | "1:1" | "2:3" | "9:16";
+type GenerationRatio = VideoRatio | ImageRatio;
 type VideoResolution = "480p" | "720p" | "1080p";
+type ImageResolution = "1k" | "2k";
+type ImageQuality = "auto" | "low" | "medium" | "high";
+type ImageSize = `${number}x${number}`;
 type ReferenceRole = "reference" | "first_frame" | "last_frame";
-type MenuKind = "mode" | "model" | "ratio" | "duration" | "resolution";
-type TopFilterKind = "time" | "mode" | "status";
+type MenuKind = "media" | "mode" | "model" | "ratio" | "duration" | "resolution" | "quality";
+type TopFilterKind = "time" | "media" | "mode" | "status";
 type TimeFilter = "all" | "today" | "week";
+type MediaFilter = "all" | MediaType;
 type ModeFilter = "all" | VideoMode;
 type StatusFilter = "all" | VideoTask["status"];
 type UsageGranularity = "hour" | "day" | "week" | "month";
@@ -68,7 +76,12 @@ interface PublicConfig {
   pollTimeoutSeconds: number;
   maxPollRetryCount: number;
   maxConcurrentVideoTasks: number;
+  maxConcurrentImageTasks: number;
   tokenPricePerThousand: number;
+  imageTokenPricePerThousand: number;
+  image2APIKeyConfigured: boolean;
+  image2APIURL: string;
+  image2Model: string;
   uploadDir: string;
   sqlitePath: string;
 }
@@ -93,7 +106,12 @@ interface RuntimeSettings {
   pollTimeoutSeconds: string;
   maxPollRetryCount: string;
   maxConcurrentVideoTasks: string;
+  maxConcurrentImageTasks: string;
   tokenPricePerThousand: string;
+  imageTokenPricePerThousand: string;
+  image2APIKey: string;
+  image2APIURL: string;
+  image2Model: string;
 }
 
 interface AssetGroup {
@@ -128,6 +146,8 @@ interface VideoReference {
 
 interface VideoTask {
   id: string;
+  mediaType?: MediaType;
+  provider?: string;
   projectId?: string;
   remoteTaskId?: string;
   prompt: string;
@@ -135,15 +155,21 @@ interface VideoTask {
   mode?: VideoMode | "text";
   referenceTransport?: ReferenceTransport;
   modelVersion?: VideoModelVersion;
-  ratio?: VideoRatio;
+  ratio?: GenerationRatio;
   duration?: number;
   resolution?: VideoResolution;
+  imageSize?: string;
+  imageResolution?: ImageResolution;
+  imageQuality?: ImageQuality;
   references?: VideoReference[];
   status: "queued" | "running" | "succeeded" | "failed";
   errorMessage?: string;
   tokenUsage?: TokenUsage;
   videoUrl?: string;
   downloadPath?: string;
+  imageModel?: string;
+  imageUrls?: string[];
+  imageDownloadPaths?: string[];
   hiddenAt?: string;
   raw?: unknown;
   createdAt: string;
@@ -187,16 +213,33 @@ interface LocalUsageSummary {
     hidden: number;
     downloaded: number;
     referenceImages: number;
+    videos?: number;
+    images?: number;
+    downloadedVideos?: number;
+    downloadedImages?: number;
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
   };
   costEstimate?: UsageCostEstimate;
   byStatus: Record<VideoTask["status"], number>;
+  byMediaType?: Record<MediaType, MediaUsageSummary>;
   byProject: Array<{ projectId: string; projectName: string; requests: number; succeeded: number; failed: number; hidden: number }>;
   byModel: Array<{ modelVersion: string; requests: number; succeeded: number; failed: number }>;
   byDay: Array<{ day: string; requests: number }>;
   projectUsage?: ProjectUsageSummary[];
+}
+
+interface MediaUsageSummary {
+  requests: number;
+  succeeded: number;
+  failed: number;
+  hidden: number;
+  downloaded: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCost: number;
 }
 
 interface UsageBucket {
@@ -222,7 +265,9 @@ interface ProjectUsageSummary {
   outputTokens: number;
   totalTokens: number;
   estimatedCost: number;
+  mediaTypes?: Record<MediaType, MediaUsageSummary>;
   buckets: Record<UsageGranularity, UsageBucket[]>;
+  bucketsByMediaType?: Record<MediaType, Record<UsageGranularity, UsageBucket[]>>;
 }
 
 interface StorageStats {
@@ -249,6 +294,8 @@ interface StorageStats {
     queued: number;
     generatedVideos: number;
     downloadedVideos: number;
+    generatedImages?: number;
+    downloadedImages?: number;
   };
 }
 
@@ -296,15 +343,17 @@ function managerTasksUrl(input: {
   limit: number;
   before?: string;
   query?: string;
+  mediaType?: MediaFilter;
   status?: "all" | VideoTask["status"] | "hidden";
   sort?: "newest" | "oldest" | "status" | "project";
 }) {
   const params = new URLSearchParams({ limit: String(input.limit) });
   if (input.before) params.set("before", input.before);
   if (input.query?.trim()) params.set("query", input.query.trim());
+  if (input.mediaType && input.mediaType !== "all") params.set("mediaType", input.mediaType);
   if (input.status && input.status !== "all") params.set("status", input.status);
   if (input.sort) params.set("sort", input.sort);
-  return `/api/manager/video-tasks?${params.toString()}`;
+  return `/api/manager/generation-tasks?${params.toString()}`;
 }
 
 const modelOptions: Array<{ value: VideoModelVersion; label: string; short: string }> = [
@@ -312,10 +361,51 @@ const modelOptions: Array<{ value: VideoModelVersion; label: string; short: stri
   { value: "doubao-seedance-2-0-260128", label: "Seedance 2.0", short: "2.0" }
 ];
 const defaultModelVersion: VideoModelVersion = "doubao-seedance-2-0-fast-260128";
+const imageModelOptions: Array<{ value: ImageModelVersion; label: string; short: string }> = [
+  { value: "gpt-image-2", label: "Image2 标准", short: "标准" },
+  { value: "gpt-image-2-pro", label: "Image2 Pro", short: "Pro" }
+];
+const defaultImageModel: ImageModelVersion = "gpt-image-2";
 
 const ratioOptions: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+const imageRatioOptions: ImageRatio[] = ["2:1", "16:9", "3:2", "1:1", "2:3", "9:16"];
 const durationOptions = Array.from({ length: 12 }, (_, index) => index + 4);
 const resolutionOptions: VideoResolution[] = ["480p", "720p", "1080p"];
+const imageResolutionOptions: Array<{ value: ImageResolution; label: string; short: string }> = [
+  { value: "1k", label: "1K", short: "1K" },
+  { value: "2k", label: "2K", short: "2K" }
+];
+const imageQualityOptions: Array<{ value: ImageQuality; label: string; short: string }> = [
+  { value: "auto", label: "自动质量", short: "自动" },
+  { value: "low", label: "低质量", short: "低" },
+  { value: "medium", label: "中等质量", short: "中" },
+  { value: "high", label: "高质量", short: "高" }
+];
+const imageRatioBaseSizes: Record<ImageRatio, readonly [number, number]> = {
+  "2:1": [2048, 1024],
+  "16:9": [1792, 1024],
+  "3:2": [1536, 1024],
+  "1:1": [1024, 1024],
+  "2:3": [1024, 1536],
+  "9:16": [1024, 1792]
+};
+const imageResolutionScale: Record<ImageResolution, number> = {
+  "1k": 1,
+  "2k": 2
+};
+const imageSizeOptions: Array<{ value: ImageSize; ratio: ImageRatio; resolution: ImageResolution; label: string }> = imageRatioOptions.flatMap((ratio) => imageResolutionOptions.map((resolution) => {
+  const value = resolveImageSizeLabelValue(ratio, resolution.value);
+  return {
+    value,
+    ratio,
+    resolution: resolution.value,
+    label: formatImageSize(value)
+  };
+}));
+const defaultImageRatio: ImageRatio = "1:1";
+const defaultImageResolution: ImageResolution = "1k";
+const defaultImageQuality: ImageQuality = "auto";
+const defaultImageSize: ImageSize = "1024x1024";
 const multimodalReferenceLimit = 9;
 
 const modeLabels: Record<VideoMode, string> = {
@@ -323,17 +413,47 @@ const modeLabels: Record<VideoMode, string> = {
   frames: "首尾帧"
 };
 
+const mediaLabels: Record<MediaType, string> = {
+  video: "视频生成",
+  image: "图片生成"
+};
+
+const EXECUTOR_COMPOSER_STORAGE_KEY = "seendance.executor.composer.v1";
+
+interface PersistedComposerState {
+  mediaType?: MediaType;
+  mode?: VideoMode;
+  referenceTransport?: ReferenceTransport;
+  modelVersion?: VideoModelVersion;
+  imageModel?: ImageModelVersion;
+  ratio?: GenerationRatio;
+  duration?: number;
+  resolution?: VideoResolution;
+  imageResolution?: ImageResolution;
+  imageQuality?: ImageQuality;
+  prompt?: string;
+  slots?: ReferenceSlot[];
+}
+
 function App() {
+  const persistedComposer = useMemo(() => loadPersistedComposerState(), []);
+  const initialMediaType = normalizeMediaType(persistedComposer?.mediaType);
+  const initialMode = initialMediaType === "image" ? "multimodal" : normalizeMode(persistedComposer?.mode);
+  const initialRatio = initialMediaType === "image" ? normalizeImageRatio(persistedComposer?.ratio) : normalizeVideoRatio(persistedComposer?.ratio);
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
-  const [mode, setMode] = useState<VideoMode>("frames");
-  const [referenceTransport, setReferenceTransport] = useState<ReferenceTransport>("url");
-  const [modelVersion, setModelVersion] = useState<VideoModelVersion>(defaultModelVersion);
-  const [ratio, setRatio] = useState<VideoRatio>("16:9");
-  const [duration, setDuration] = useState(5);
-  const [resolution, setResolution] = useState<VideoResolution>("720p");
-  const [prompt, setPrompt] = useState("");
-  const [slots, setSlots] = useState<ReferenceSlot[]>(initialSlots("frames"));
+  const [mediaType, setMediaType] = useState<MediaType>(initialMediaType);
+  const [mode, setMode] = useState<VideoMode>(initialMode);
+  const [referenceTransport, setReferenceTransport] = useState<ReferenceTransport>(normalizeReferenceTransport(persistedComposer?.referenceTransport));
+  const [modelVersion, setModelVersion] = useState<VideoModelVersion>(normalizeModelVersion(persistedComposer?.modelVersion));
+  const [imageModel, setImageModel] = useState<ImageModelVersion>(normalizeImageModel(persistedComposer?.imageModel));
+  const [ratio, setRatio] = useState<GenerationRatio>(initialRatio);
+  const [duration, setDuration] = useState(normalizeDuration(persistedComposer?.duration));
+  const [resolution, setResolution] = useState<VideoResolution>(normalizeResolution(persistedComposer?.resolution, normalizeModelVersion(persistedComposer?.modelVersion)));
+  const [imageResolution, setImageResolution] = useState<ImageResolution>(normalizeImageResolution(persistedComposer?.imageResolution, persistedComposer?.ratio));
+  const [imageQuality, setImageQuality] = useState<ImageQuality>(normalizeImageQuality(persistedComposer?.imageQuality));
+  const [prompt, setPrompt] = useState(persistedComposer?.prompt ?? "");
+  const [slots, setSlots] = useState<ReferenceSlot[]>(() => restorePersistedSlots(persistedComposer, initialMode));
   const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
   const [openMenu, setOpenMenu] = useState<OpenMenuState | null>(null);
@@ -341,6 +461,7 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [view, setView] = useState<"generate" | "assets">("generate");
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [openTopFilter, setOpenTopFilter] = useState<TopFilterKind | null>(null);
@@ -357,10 +478,12 @@ function App() {
   const activeProjectId = selectedProjectId ?? activeProjects[0]?.id ?? "";
   const activeProjectIdRef = useRef(activeProjectId);
   activeProjectIdRef.current = activeProjectId;
-  const filteredTasks = useMemo(() => filterTasks(executorTasks, { timeFilter, modeFilter, statusFilter }), [executorTasks, modeFilter, statusFilter, timeFilter]);
+  const filteredTasks = useMemo(() => filterTasks(executorTasks, { timeFilter, mediaFilter, modeFilter, statusFilter }), [executorTasks, mediaFilter, modeFilter, statusFilter, timeFilter]);
   const sessionTasks = useMemo(() => sortTasksForBottomStack(filteredTasks), [filteredTasks]);
-  const generatedAssets = useMemo(() => sortTasksForBottomStack(executorTasks.filter((task) => task.videoUrl || task.downloadPath)), [executorTasks]);
+  const generatedAssets = useMemo(() => sortTasksForBottomStack(executorTasks.filter(hasGeneratedAsset)), [executorTasks]);
   const selectedModel = modelOptions.find((item) => item.value === modelVersion) ?? modelOptions[0];
+  const selectedImageModel = imageModelOptions.find((item) => item.value === imageModel) ?? imageModelOptions[0];
+  const selectedImageQuality = imageQualityOptions.find((item) => item.value === imageQuality) ?? imageQualityOptions[0];
   const availableResolutions = useMemo(() => allowedResolutions(modelVersion), [modelVersion]);
 
   async function refresh() {
@@ -410,6 +533,23 @@ function App() {
   }, [executorTasks.length]);
 
   useEffect(() => {
+    savePersistedComposerState({
+      mediaType,
+      mode,
+      referenceTransport,
+      modelVersion,
+      imageModel,
+      ratio,
+      duration,
+      resolution,
+      imageResolution,
+      imageQuality,
+      prompt,
+      slots
+    });
+  }, [duration, imageModel, imageQuality, imageResolution, mediaType, mode, modelVersion, prompt, ratio, referenceTransport, resolution, slots]);
+
+  useEffect(() => {
     if (view !== "generate") return;
     window.addEventListener("scroll", handleTimelineScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleTimelineScroll);
@@ -446,6 +586,19 @@ function App() {
     setOpenMenu(null);
   }
 
+  function switchMedia(nextMediaType: MediaType) {
+    setMediaType(nextMediaType);
+    if (nextMediaType === "image") {
+      setMode("multimodal");
+      setSlots(initialSlots("multimodal"));
+      setRatio(normalizeImageRatio(ratio));
+    } else {
+      setRatio(normalizeVideoRatio(ratio));
+      setSlots(initialSlots(mode));
+    }
+    setOpenMenu(null);
+  }
+
   function toggleMenu(kind: MenuKind, event: React.MouseEvent<HTMLButtonElement>) {
     if (openMenu?.kind === kind) {
       setOpenMenu(null);
@@ -464,17 +617,31 @@ function App() {
     }
   }
 
-  async function submitVideoTask(overrides?: Partial<ComposerPayload>) {
+  function chooseRatio(nextRatio: GenerationRatio) {
+    if (mediaType === "image") {
+      const normalized = normalizeImageRatio(nextRatio);
+      setRatio(normalized);
+      return;
+    }
+    setRatio(normalizeVideoRatio(nextRatio));
+  }
+
+  function chooseImageResolution(nextResolution: ImageResolution) {
+    setImageResolution(nextResolution);
+  }
+
+  async function submitGenerationTask(overrides?: Partial<ComposerPayload>) {
     const payload = buildComposerPayload(overrides);
-    setBusy("video");
+    const nextMediaType = payload.mediaType ?? "video";
+    setBusy("generation");
     setToast("");
     try {
-      const response = await fetch("/api/video-tasks", {
+      const response = await fetch(nextMediaType === "image" ? "/api/generation-tasks" : "/api/video-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const result = await readJsonOrThrow<VideoTask>(response, "提交视频任务失败");
+      const result = await readJsonOrThrow<VideoTask>(response, nextMediaType === "image" ? "提交图片任务失败" : "提交视频任务失败");
       setSelectedTaskId(result.id);
       setExecutorTasks((current) => mergeTasksById([result], current));
       await refresh();
@@ -487,19 +654,24 @@ function App() {
   }
 
   function buildComposerPayload(overrides: Partial<ComposerPayload> = {}): ComposerPayload {
+    const nextMediaType = overrides.mediaType ?? mediaType;
     return {
+      mediaType: nextMediaType,
       projectId: activeProjectId || undefined,
       mode,
       referenceTransport,
       prompt: prompt.trim(),
       modelVersion,
-      ratio,
+      ratio: nextMediaType === "image" ? normalizeImageRatio(ratio) : normalizeVideoRatio(ratio),
       duration,
       resolution,
+      imageModel,
+      imageResolution,
+      imageQuality,
       references: slots
         .filter((slot) => slot.url)
         .map((slot) => ({
-          role: slot.role,
+          role: nextMediaType === "image" ? "reference" as const : slot.role,
           sourceUrl: slot.remoteUrl || slot.url,
           previewUrl: slot.localUrl || slot.url,
           localPath: slot.localPath,
@@ -512,26 +684,36 @@ function App() {
   }
 
   function restoreTask(task: VideoTask) {
-    setMode((task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal");
+    const taskMediaType = mediaTypeOf(task);
+    setMediaType(taskMediaType);
+    setMode(taskMediaType === "image" ? "multimodal" : (task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal");
     setReferenceTransport(task.referenceTransport ?? "url");
     setModelVersion(normalizeModelVersion(task.modelVersion));
-    setRatio(task.ratio ?? "16:9");
+    setImageModel(normalizeImageModel(task.imageModel));
+    setRatio(taskMediaType === "image" ? normalizeImageRatio(task.ratio) : normalizeVideoRatio(task.ratio));
     setDuration(task.duration ?? 5);
     setResolution(normalizeResolution(task.resolution, normalizeModelVersion(task.modelVersion)));
+    setImageResolution(normalizeImageResolution(task.imageResolution, task.ratio, task.imageSize));
+    setImageQuality(normalizeImageQuality(task.imageQuality));
     setPrompt(task.prompt);
     setSlots(slotsFromTask(task));
     scrollTimelineToBottom("smooth");
   }
 
   function regenerateTask(task: VideoTask) {
-    void submitVideoTask({
-      mode: (task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal",
+    const taskMediaType = mediaTypeOf(task);
+    void submitGenerationTask({
+      mediaType: taskMediaType,
+      mode: taskMediaType === "image" ? "multimodal" : (task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal",
       referenceTransport: task.referenceTransport ?? "url",
       prompt: task.prompt,
       modelVersion: normalizeModelVersion(task.modelVersion),
-      ratio: task.ratio ?? "16:9",
+      ratio: taskMediaType === "image" ? normalizeImageRatio(task.ratio) : normalizeVideoRatio(task.ratio),
       duration: task.duration ?? 5,
       resolution: normalizeResolution(task.resolution, normalizeModelVersion(task.modelVersion)),
+      imageModel: normalizeImageModel(task.imageModel),
+      imageResolution: normalizeImageResolution(task.imageResolution, task.ratio, task.imageSize),
+      imageQuality: normalizeImageQuality(task.imageQuality),
       references: task.references ?? []
     });
   }
@@ -540,7 +722,7 @@ function App() {
     setBusy(`delete-${taskId}`);
     setToast("");
     try {
-      const response = await fetch(`/api/video-tasks/${taskId}`, { method: "DELETE" });
+      const response = await fetch(`/api/generation-tasks/${taskId}`, { method: "DELETE" });
       await readJsonOrThrow(response, "删除记录失败");
       setSelectedTaskId((id) => id === taskId ? null : id);
       setExecutorTasks((tasks) => tasks.filter((task) => task.id !== taskId));
@@ -649,11 +831,13 @@ function App() {
   }
 
   const canSubmit = useMemo(() => {
-    if (!config?.arkAPIKeyConfigured || !prompt.trim() || slots.some((slot) => slot.uploading)) return false;
+    if (!prompt.trim() || slots.some((slot) => slot.uploading)) return false;
+    if (mediaType === "image") return Boolean(config?.image2APIKeyConfigured);
+    if (!config?.arkAPIKeyConfigured) return false;
     const filled = slots.filter((slot) => slot.url);
     if (mode === "frames") return filled.some((slot) => slot.role === "first_frame") && filled.some((slot) => slot.role === "last_frame");
     return filled.length > 0 && filled.length <= multimodalReferenceLimit;
-  }, [config?.arkAPIKeyConfigured, mode, prompt, slots]);
+  }, [config?.arkAPIKeyConfigured, config?.image2APIKeyConfigured, mediaType, mode, prompt, slots]);
 
   return (
     <main className="dream-shell">
@@ -676,10 +860,12 @@ function App() {
         <TopFilters
           open={openTopFilter}
           timeFilter={timeFilter}
+          mediaFilter={mediaFilter}
           modeFilter={modeFilter}
           statusFilter={statusFilter}
           onOpen={setOpenTopFilter}
           onTime={setTimeFilter}
+          onMedia={setMediaFilter}
           onMode={setModeFilter}
           onStatus={setStatusFilter}
         />
@@ -719,30 +905,31 @@ function App() {
 
       {view === "generate" && <section className="composer-wrap">
         {toast && <div className="toast"><span>{toast}</span><button onClick={() => setToast("")} title="关闭提示">×</button></div>}
-        <div className="composer" ref={composerRef}>
+        <div className={`composer ${mediaType === "image" ? "image-composer" : ""}`} ref={composerRef}>
           <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, remoteUrl: undefined, localPath: undefined, localUrl: undefined, error: "" } : slot))} onInsertReference={insertReference} />
           <textarea
             ref={promptRef}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            placeholder={mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：图片 1 模仿图片 2 的动作。"}
+            placeholder={mediaType === "image" ? "输入图片生成提示词。可以只写文字，也可以上传参考图后用 @图片 引用它们。" : mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：图片 1 模仿图片 2 的动作。"}
           />
           <div className="composer-controls">
-            <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<Sparkles size={18} />} label="视频生成" />
-            <MenuButton active={openMenu?.kind === "model"} onClick={(event) => toggleMenu("model", event)} icon={<Film size={18} />} label={selectedModel.label} />
-            <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<FileImage size={18} />} label={modeLabels[mode]} />
+            <MenuButton active={openMenu?.kind === "media"} onClick={(event) => toggleMenu("media", event)} icon={mediaType === "image" ? <FileImage size={18} /> : <Sparkles size={18} />} label={mediaLabels[mediaType]} />
+            <MenuButton active={openMenu?.kind === "model"} onClick={(event) => toggleMenu("model", event)} icon={mediaType === "image" ? <FileImage size={18} /> : <Film size={18} />} label={mediaType === "image" ? selectedImageModel.label : selectedModel.label} />
+            {mediaType === "video" && <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<FileImage size={18} />} label={modeLabels[mode]} />}
             <MenuButton active={openMenu?.kind === "ratio"} onClick={(event) => toggleMenu("ratio", event)} icon={<RatioIcon ratio={ratio} />} label={ratio} />
-            <MenuButton active={openMenu?.kind === "duration"} onClick={(event) => toggleMenu("duration", event)} icon={<Clock3 size={18} />} label={`${duration}s`} />
-            <MenuButton active={openMenu?.kind === "resolution"} onClick={(event) => toggleMenu("resolution", event)} icon={<Gauge size={18} />} label={resolution} />
-            <button className={`transport-toggle ${referenceTransport === "url" ? "active" : ""}`} onClick={() => setReferenceTransport(referenceTransport === "asset" ? "url" : "asset")} title="切换参考图片链路">
+            {mediaType === "video" && <MenuButton active={openMenu?.kind === "duration"} onClick={(event) => toggleMenu("duration", event)} icon={<Clock3 size={18} />} label={`${duration}s`} />}
+            <MenuButton active={openMenu?.kind === "resolution"} onClick={(event) => toggleMenu("resolution", event)} icon={<Gauge size={18} />} label={mediaType === "image" ? imageResolutionLabel(imageResolution) : resolution} />
+            {mediaType === "image" && <MenuButton active={openMenu?.kind === "quality"} onClick={(event) => toggleMenu("quality", event)} icon={<Sparkles size={18} />} label={selectedImageQuality.short} />}
+            {mediaType === "video" && <button className={`transport-toggle ${referenceTransport === "url" ? "active" : ""}`} onClick={() => setReferenceTransport(referenceTransport === "asset" ? "url" : "asset")} title="切换参考图片链路">
               {referenceTransport === "asset" ? "Asset" : "URL"}
-            </button>
-            <button className="submit-button" disabled={!canSubmit || busy === "video"} onClick={() => submitVideoTask()}>
-              {busy === "video" ? <Loader2 className="spin" size={20} /> : <ArrowUp size={22} />}
+            </button>}
+            <button className="submit-button" disabled={!canSubmit || busy === "generation"} onClick={() => submitGenerationTask()}>
+              {busy === "generation" ? <Loader2 className="spin" size={20} /> : <ArrowUp size={22} />}
             </button>
           </div>
           {openMenu && (
-            <FloatingMenu kind={openMenu.kind} anchorX={openMenu.x} mode={mode} modelVersion={modelVersion} ratio={ratio} duration={duration} resolution={resolution} availableResolutions={availableResolutions} onMode={switchMode} onModel={chooseModel} onRatio={setRatio} onDuration={setDuration} onResolution={setResolution} onClose={() => setOpenMenu(null)} />
+            <FloatingMenu kind={openMenu.kind} anchorX={openMenu.x} mediaType={mediaType} mode={mode} modelVersion={modelVersion} imageModel={imageModel} ratio={ratio} duration={duration} resolution={resolution} imageResolution={imageResolution} imageQuality={imageQuality} availableResolutions={availableResolutions} onMedia={switchMedia} onMode={switchMode} onModel={chooseModel} onImageModel={setImageModel} onRatio={chooseRatio} onDuration={setDuration} onResolution={setResolution} onImageResolution={chooseImageResolution} onImageQuality={setImageQuality} onClose={() => setOpenMenu(null)} />
           )}
         </div>
       </section>}
@@ -751,24 +938,30 @@ function App() {
 }
 
 interface ComposerPayload {
+  mediaType: MediaType;
   projectId?: string;
   mode: VideoMode;
   referenceTransport: ReferenceTransport;
   prompt: string;
   modelVersion: VideoModelVersion;
-  ratio: VideoRatio;
+  ratio: GenerationRatio;
   duration: number;
   resolution: VideoResolution;
+  imageModel: ImageModelVersion;
+  imageResolution: ImageResolution;
+  imageQuality: ImageQuality;
   references: VideoReference[];
 }
 
-function TopFilters({ open, timeFilter, modeFilter, statusFilter, onOpen, onTime, onMode, onStatus }: {
+function TopFilters({ open, timeFilter, mediaFilter, modeFilter, statusFilter, onOpen, onTime, onMedia, onMode, onStatus }: {
   open: TopFilterKind | null;
   timeFilter: TimeFilter;
+  mediaFilter: MediaFilter;
   modeFilter: ModeFilter;
   statusFilter: StatusFilter;
   onOpen: (kind: TopFilterKind | null) => void;
   onTime: (value: TimeFilter) => void;
+  onMedia: (value: MediaFilter) => void;
   onMode: (value: ModeFilter) => void;
   onStatus: (value: StatusFilter) => void;
 }) {
@@ -776,6 +969,7 @@ function TopFilters({ open, timeFilter, modeFilter, statusFilter, onOpen, onTime
     <div className="search-pill">
       <button title="筛选"><Search size={17} /></button>
       <TopFilterButton active={open === "time"} label={timeFilterLabel(timeFilter)} onClick={() => onOpen(open === "time" ? null : "time")} />
+      <TopFilterButton active={open === "media"} label={mediaFilterLabel(mediaFilter)} onClick={() => onOpen(open === "media" ? null : "media")} />
       <TopFilterButton active={open === "mode"} label={modeFilterLabel(modeFilter)} onClick={() => onOpen(open === "mode" ? null : "mode")} />
       <TopFilterButton active={open === "status"} label={statusFilterLabel(statusFilter)} onClick={() => onOpen(open === "status" ? null : "status")} />
       {open === "time" && (
@@ -786,6 +980,11 @@ function TopFilters({ open, timeFilter, modeFilter, statusFilter, onOpen, onTime
       {open === "mode" && (
         <div className="top-filter-menu mode-filter-menu">
           {(["all", "multimodal", "frames"] as ModeFilter[]).map((item) => <button key={item} className={modeFilter === item ? "selected" : ""} onClick={() => { onMode(item); onOpen(null); }}>{modeFilterLabel(item)}</button>)}
+        </div>
+      )}
+      {open === "media" && (
+        <div className="top-filter-menu media-filter-menu">
+          {(["all", "video", "image"] as MediaFilter[]).map((item) => <button key={item} className={mediaFilter === item ? "selected" : ""} onClick={() => { onMedia(item); onOpen(null); }}>{mediaFilterLabel(item)}</button>)}
         </div>
       )}
       {open === "status" && (
@@ -927,9 +1126,10 @@ function sortTasksForBottomStack(tasks: VideoTask[]) {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
-function filterTasks(tasks: VideoTask[], filters: { timeFilter: TimeFilter; modeFilter: ModeFilter; statusFilter: StatusFilter }) {
+function filterTasks(tasks: VideoTask[], filters: { timeFilter: TimeFilter; mediaFilter: MediaFilter; modeFilter: ModeFilter; statusFilter: StatusFilter }) {
   const now = Date.now();
   return tasks.filter((task) => {
+    if (filters.mediaFilter !== "all" && mediaTypeOf(task) !== filters.mediaFilter) return false;
     if (filters.modeFilter !== "all" && task.mode !== filters.modeFilter) return false;
     if (filters.statusFilter !== "all" && task.status !== filters.statusFilter) return false;
     if (filters.timeFilter === "today") return new Date(task.createdAt).toDateString() === new Date(now).toDateString();
@@ -938,10 +1138,26 @@ function filterTasks(tasks: VideoTask[], filters: { timeFilter: TimeFilter; mode
   });
 }
 
+function mediaTypeOf(task: Pick<VideoTask, "mediaType">): MediaType {
+  return task.mediaType === "image" ? "image" : "video";
+}
+
+function hasGeneratedAsset(task: VideoTask) {
+  return mediaTypeOf(task) === "image"
+    ? Boolean((task.imageUrls?.length ?? 0) || (task.imageDownloadPaths?.length ?? 0))
+    : Boolean(task.videoUrl || task.downloadPath);
+}
+
 function timeFilterLabel(value: TimeFilter) {
   if (value === "today") return "今天";
   if (value === "week") return "近7天";
   return "时间";
+}
+
+function mediaFilterLabel(value: MediaFilter) {
+  if (value === "video") return "视频";
+  if (value === "image") return "图片";
+  return "类型";
 }
 
 function modeFilterLabel(value: ModeFilter) {
@@ -986,6 +1202,56 @@ function initialSlots(mode: VideoMode): ReferenceSlot[] {
       token: labelForReferenceIndex(index)
     }))
   ];
+}
+
+function loadPersistedComposerState(): PersistedComposerState | null {
+  try {
+    const raw = localStorage.getItem(EXECUTOR_COMPOSER_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed as PersistedComposerState : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedComposerState(state: PersistedComposerState) {
+  try {
+    localStorage.setItem(EXECUTOR_COMPOSER_STORAGE_KEY, JSON.stringify({
+      ...state,
+      slots: serializePersistedSlots(state.slots ?? [])
+    }));
+  } catch {
+    // Persistence is a convenience; generation should not fail if storage is unavailable.
+  }
+}
+
+function serializePersistedSlots(slots: ReferenceSlot[]) {
+  return slots
+    .filter((slot) => slot.url || slot.remoteUrl || slot.localUrl || slot.localPath)
+    .map((slot) => ({
+      id: slot.id,
+      role: slot.role,
+      label: slot.label,
+      token: slot.token,
+      url: slot.url,
+      remoteUrl: slot.remoteUrl,
+      localPath: slot.localPath,
+      localUrl: slot.localUrl
+    }));
+}
+
+function restorePersistedSlots(state: PersistedComposerState | null, mode: VideoMode): ReferenceSlot[] {
+  const base = initialSlots(mode);
+  for (const saved of state?.slots ?? []) {
+    const target = base.find((slot) => slot.id === saved.id) ?? base.find((slot) => slot.role === saved.role && !slot.url);
+    if (!target) continue;
+    target.url = saved.url;
+    target.remoteUrl = saved.remoteUrl;
+    target.localPath = saved.localPath;
+    target.localUrl = saved.localUrl;
+  }
+  return base;
 }
 
 function slotsFromTask(task: VideoTask): ReferenceSlot[] {
@@ -1054,36 +1320,66 @@ function MenuButton({ icon, label, active, onClick }: { icon: React.ReactNode; l
   return <button className={`menu-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span><ChevronDown size={16} /></button>;
 }
 
-function FloatingMenu({ kind, anchorX, mode, modelVersion, ratio, duration, resolution, availableResolutions, onMode, onModel, onRatio, onDuration, onResolution, onClose }: {
+function FloatingMenu({ kind, anchorX, mediaType, mode, modelVersion, imageModel, ratio, duration, resolution, imageResolution, imageQuality, availableResolutions, onMedia, onMode, onModel, onImageModel, onRatio, onDuration, onResolution, onImageResolution, onImageQuality, onClose }: {
   kind: MenuKind;
   anchorX: number;
+  mediaType: MediaType;
   mode: VideoMode;
   modelVersion: VideoModelVersion;
-  ratio: VideoRatio;
+  imageModel: ImageModelVersion;
+  ratio: GenerationRatio;
   duration: number;
   resolution: VideoResolution;
+  imageResolution: ImageResolution;
+  imageQuality: ImageQuality;
   availableResolutions: VideoResolution[];
+  onMedia: (value: MediaType) => void;
   onMode: (value: VideoMode) => void;
   onModel: (value: VideoModelVersion) => void;
-  onRatio: (value: VideoRatio) => void;
+  onImageModel: (value: ImageModelVersion) => void;
+  onRatio: (value: GenerationRatio) => void;
   onDuration: (value: number) => void;
   onResolution: (value: VideoResolution) => void;
+  onImageResolution: (value: ImageResolution) => void;
+  onImageQuality: (value: ImageQuality) => void;
   onClose: () => void;
 }) {
   const style = { "--menu-anchor-x": `${Math.round(anchorX)}px` } as React.CSSProperties;
+  if (kind === "media") {
+    return <div className="floating-menu media-menu" style={style}><p>选择生成类型</p>{(["video", "image"] as MediaType[]).map((item) => <button key={item} className={mediaType === item ? "selected" : ""} onClick={() => onMedia(item)}>{item === "image" ? <FileImage size={18} /> : <Film size={18} />}{mediaLabels[item]}{mediaType === item && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
   if (kind === "ratio") {
+    if (mediaType === "image") {
+      return <div className="floating-menu ratio-menu image-ratio-menu" style={style}><p>选择图片比例</p>{imageRatioOptions.map((item) => {
+        const size = imageSizeFor(item, imageResolution);
+        return <button key={item} className={ratio === item ? "selected" : ""} onClick={() => { onRatio(item); onClose(); }}><RatioIcon ratio={item} /><span>{item}</span><em>{imageResolutionLabel(imageResolution)} · {size.label}</em>{ratio === item && <Check className="option-check" size={18} />}</button>;
+      })}</div>;
+    }
     return <div className="floating-menu ratio-menu" style={style}><p>选择比例</p>{ratioOptions.map((item) => <button key={item} className={ratio === item ? "selected" : ""} onClick={() => { onRatio(item); onClose(); }}><RatioIcon ratio={item} />{item}</button>)}</div>;
   }
   if (kind === "duration") {
     return <div className="floating-menu duration-menu" style={style}><p>选择视频生成时长</p>{durationOptions.map((item) => <button key={item} className={duration === item ? "selected" : ""} onClick={() => { onDuration(item); onClose(); }}><Clock3 size={18} />{item}s{duration === item && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "resolution") {
+    if (mediaType === "image") {
+      const imageRatio = normalizeImageRatio(ratio);
+      return <div className="floating-menu resolution-menu" style={style}><p>选择图片清晰度</p>{imageResolutionOptions.map((item) => {
+        const size = imageSizeFor(imageRatio, item.value);
+        return <button key={item.value} className={imageResolution === item.value ? "selected" : ""} title={size.label} onClick={() => { onImageResolution(item.value); onClose(); }}><Gauge size={18} /><span>{item.label}</span><em>{size.label}</em>{imageResolution === item.value && <Check className="option-check" size={18} />}</button>;
+      })}</div>;
+    }
     return <div className="floating-menu resolution-menu" style={style}><p>选择清晰度</p>{resolutionOptions.map((item) => {
       const disabled = !availableResolutions.includes(item);
       return <button key={item} disabled={disabled} className={resolution === item ? "selected" : ""} title={disabled ? "Seedance 2.0 Fast 不支持 1080p" : undefined} onClick={() => { if (disabled) return; onResolution(item); onClose(); }}><Gauge size={18} />{item}{resolution === item && <Check className="option-check" size={18} />}</button>;
     })}</div>;
   }
+  if (kind === "quality") {
+    return <div className="floating-menu quality-menu" style={style}><p>选择图片质量</p>{imageQualityOptions.map((item) => <button key={item.value} className={imageQuality === item.value ? "selected" : ""} onClick={() => { onImageQuality(item.value); onClose(); }}><Sparkles size={18} /><span>{item.label}</span><em>{item.value}</em>{imageQuality === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
   if (kind === "model") {
+    if (mediaType === "image") {
+      return <div className="floating-menu model-menu" style={style}><p>选择图片模型</p>{imageModelOptions.map((item) => <button key={item.value} className={imageModel === item.value ? "selected" : ""} onClick={() => { onImageModel(item.value); onClose(); }}><FileImage size={18} />{item.label}{imageModel === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+    }
     return <div className="floating-menu model-menu" style={style}><p>选择模型</p>{modelOptions.map((item) => <button key={item.value} className={modelVersion === item.value ? "selected" : ""} onClick={() => { onModel(item.value); onClose(); }}><Film size={18} />{item.label}{modelVersion === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   return <div className="floating-menu mode-menu" style={style}><p>选择生成模式</p>{(["multimodal", "frames"] as VideoMode[]).map((item) => <button key={item} className={mode === item ? "selected" : ""} onClick={() => onMode(item)}><UploadCloud size={18} />{modeLabels[item]}{mode === item && <Check className="option-check" size={18} />}</button>)}</div>;
@@ -1105,9 +1401,9 @@ function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete, onDownl
     <section className="asset-library">
       <header>
         <p>全局数据库</p>
-        <h1>生成视频资产</h1>
+        <h1>生成资产</h1>
       </header>
-      {!tasks.length && <section className="empty-state"><Film size={30} /><h1>暂无视频资产</h1><p>成功生成或下载后的视频会出现在这里。</p></section>}
+      {!tasks.length && <section className="empty-state"><Film size={30} /><h1>暂无生成资产</h1><p>成功生成或下载后的视频和图片会出现在这里。</p></section>}
       <div className="asset-grid">
         {tasks.map((task) => (
           <TaskCard
@@ -1127,21 +1423,28 @@ function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete, onDownl
 }
 
 function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete, onDownloadDebug }: { task: VideoTask; selected: boolean; latestLog?: PollLog; onEdit: () => void; onRegenerate: () => void; onDelete: () => void; onDownloadDebug: () => void }) {
-  const model = modelOptions.find((item) => item.value === task.modelVersion)?.label ?? "Seedance 2.0";
+  const taskMediaType = mediaTypeOf(task);
+  const model = taskMediaType === "image" ? modelLabel(task.imageModel || "gpt-image-2") : modelOptions.find((item) => item.value === task.modelVersion)?.label ?? "Seedance 2.0";
+  const taskImageRatio = normalizeImageRatio(task.ratio);
+  const taskImageResolution = normalizeImageResolution(task.imageResolution, task.ratio, task.imageSize);
+  const taskImageQuality = normalizeImageQuality(task.imageQuality);
   return (
-    <article className={`history-card ${task.status} ${selected ? "selected" : ""}`} data-task-id={task.id}>
+    <article className={`history-card ${task.status} ${taskMediaType} ${selected ? "selected" : ""}`} data-task-id={task.id}>
       <div className="prompt-line">
         <ReferenceThumbs references={task.references ?? []} />
         <p>{task.prompt}</p>
         <span>{model}</span>
-        <span>{task.duration ?? 5}s</span>
-        <span>{task.resolution ?? "720p"}</span>
-        <span>{modeLabels[(task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal"]}</span>
+        {taskMediaType === "video" && <span>{task.duration ?? 5}s</span>}
+        {taskMediaType === "video" && <span>{task.resolution ?? "720p"}</span>}
+        {taskMediaType === "image" && <span>{taskImageRatio}</span>}
+        {taskMediaType === "image" && <span>{imageResolutionLabel(taskImageResolution)}</span>}
+        {taskMediaType === "image" && <span>{imageQualityLabel(taskImageQuality)}</span>}
+        <span>{taskMediaType === "image" ? "图片生成" : modeLabels[(task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal"]}</span>
         <span>{formatTokenUsage(resolveClientTokenUsage(task))}</span>
         <span className={`status-badge ${task.status}`}>{taskStatusLabel(task, latestLog)}</span>
       </div>
       <div className="result-frame">
-        {videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls /> : <TaskPlaceholder status={task.status} />}
+        {taskMediaType === "image" && imagePreviewUrl(task) ? <img src={imagePreviewUrl(task)} loading="lazy" alt={task.prompt} /> : videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls /> : <TaskPlaceholder status={task.status} />}
       </div>
       <div className="task-actions">
         <button onClick={onEdit}><PencilLine size={18} />重新编辑</button>
@@ -1156,13 +1459,33 @@ function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete, o
 }
 
 function videoPreviewUrl(task: VideoTask) {
+  if (mediaTypeOf(task) !== "video") return undefined;
   return task.downloadPath ? `/api/video-tasks/${task.id}/download` : task.videoUrl;
 }
 
+function imagePreviewUrl(task: VideoTask) {
+  if (mediaTypeOf(task) !== "image") return undefined;
+  return (task.imageDownloadPaths?.length ?? 0) > 0 ? `/api/generation-tasks/${task.id}/file/0` : task.imageUrls?.[0];
+}
+
 function taskStatusLabel(task: VideoTask, latestLog?: PollLog) {
+  if (mediaTypeOf(task) === "image") {
+    if (task.status === "succeeded" && (task.imageDownloadPaths?.length ?? 0) > 0) return "图片已下载";
+    if (task.status === "succeeded") return "图片生成完成";
+    return latestLog?.message.replace("图片任务状态：", "") || task.status;
+  }
   if (task.status === "succeeded" && task.downloadPath) return "视频已下载";
   if (task.status === "succeeded") return "生成完成";
   return latestLog?.message.replace("视频任务状态：", "") || task.status;
+}
+
+function mediaAssetLabel(task: VideoTask) {
+  if (mediaTypeOf(task) === "image") {
+    if ((task.imageDownloadPaths?.length ?? 0) > 0) return "本地图片";
+    if ((task.imageUrls?.length ?? 0) > 0) return "远程图片";
+    return "未生成";
+  }
+  return task.downloadPath ? "本地视频" : task.videoUrl ? "远程视频" : "未生成";
 }
 
 function ReferenceThumbs({ references }: { references: VideoReference[] }) {
@@ -1187,6 +1510,7 @@ function ManagerApp() {
   const [managerView, setManagerView] = useState<"dashboard" | "records" | "projects">("dashboard");
   const [usageGranularity, setUsageGranularity] = useState<UsageGranularity>("day");
   const [usageMetric, setUsageMetric] = useState<UsageMetricMode>("tokens");
+  const [usageMediaType, setUsageMediaType] = useState<MediaFilter>("all");
   const [cardSize, setCardSize] = useState<ProjectCardSize>("regular");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -1258,7 +1582,7 @@ function ManagerApp() {
     setBusy(`hard-delete-${taskId}`);
     setMessage("");
     try {
-      const response = await fetch(`/api/manager/video-tasks/${taskId}`, {
+      const response = await fetch(`/api/manager/generation-tasks/${taskId}`, {
         method: "DELETE",
         headers: { "x-sts-manager-token": managerToken }
       });
@@ -1298,8 +1622,8 @@ function ManagerApp() {
         method: "POST",
         headers: { "x-sts-manager-token": managerToken }
       });
-      const result = await readJsonOrThrow<{ path: string }>(response, "打开视频数据库失败");
-      setMessage(`视频数据库已打开：${result.path}`);
+      const result = await readJsonOrThrow<{ path: string }>(response, "打开媒体数据库失败");
+      setMessage(`媒体数据库已打开：${result.path}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1349,9 +1673,18 @@ function ManagerApp() {
             {busy === "settings" ? <Loader2 className="spin" size={18} /> : <Save size={18} />}保存参数
           </button>}
           {managerView === "records" && <button className="manager-primary" onClick={openVideoDatabase} disabled={busy === "open-database"}>
-            {busy === "open-database" ? <Loader2 className="spin" size={18} /> : <Folder size={18} />}打开视频数据库
+            {busy === "open-database" ? <Loader2 className="spin" size={18} /> : <Folder size={18} />}打开媒体数据库
           </button>}
           {managerView === "projects" && <div className="monitor-controls">
+            <SegmentedControl
+              value={usageMediaType}
+              options={[
+                ["all", "全部"],
+                ["video", "视频"],
+                ["image", "图片"]
+              ]}
+              onChange={(value) => setUsageMediaType(value as MediaFilter)}
+            />
             <SegmentedControl
               value={usageGranularity}
               options={[
@@ -1411,7 +1744,12 @@ function ManagerApp() {
                   <SettingField label="POLL_TIMEOUT_SECONDS" value={settings.pollTimeoutSeconds} onChange={(value) => setSettings({ ...settings, pollTimeoutSeconds: value })} />
                   <SettingField label="MAX_POLL_RETRY_COUNT" value={settings.maxPollRetryCount} onChange={(value) => setSettings({ ...settings, maxPollRetryCount: value })} />
                   <SettingField label="MAX_CONCURRENT_VIDEO_TASKS" value={settings.maxConcurrentVideoTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentVideoTasks: value })} />
+                  <SettingField label="MAX_CONCURRENT_IMAGE_TASKS" value={settings.maxConcurrentImageTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentImageTasks: value })} />
                   <SettingField label="TOKEN_PRICE_PER_THOUSAND" value={settings.tokenPricePerThousand} onChange={(value) => setSettings({ ...settings, tokenPricePerThousand: value })} />
+                  <SettingField label="IMAGE_TOKEN_PRICE_PER_THOUSAND" value={settings.imageTokenPricePerThousand} onChange={(value) => setSettings({ ...settings, imageTokenPricePerThousand: value })} />
+                  <SettingField label="IMAGE2_API_KEY" value={settings.image2APIKey} onChange={(value) => setSettings({ ...settings, image2APIKey: value })} />
+                  <SettingField label="IMAGE2_API_URL" value={settings.image2APIURL} onChange={(value) => setSettings({ ...settings, image2APIURL: value })} />
+                  <SettingField label="IMAGE2_MODEL" value={settings.image2Model} onChange={(value) => setSettings({ ...settings, image2Model: value })} />
                 </SettingsGroup>
               </div>
             )}
@@ -1425,7 +1763,7 @@ function ManagerApp() {
         </section> : managerView === "records" ? (
           <ManagerRecords managerToken={managerToken} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} onDownloadDebug={downloadTaskDebug} />
         ) : (
-          <ManagerProjects projects={state.videoProjects} localUsage={localUsage} granularity={usageGranularity} metric={usageMetric} cardSize={cardSize} busy={busy} onRestoreProject={restoreProject} />
+          <ManagerProjects projects={state.videoProjects} localUsage={localUsage} mediaFilter={usageMediaType} granularity={usageGranularity} metric={usageMetric} cardSize={cardSize} busy={busy} onRestoreProject={restoreProject} />
         )}
       </section>
     </main>
@@ -1479,13 +1817,18 @@ function UsagePanel({ localUsage, storageStats }: { localUsage: LocalUsageSummar
         <UsageMetric label="本地成功" value={localUsage.byStatus.succeeded} />
         <UsageMetric label="本地失败" value={localUsage.byStatus.failed} />
         <UsageMetric label="任务记录" value={storageStats?.tasks.total ?? localUsage.totals.requests} />
-        <UsageMetric label="视频数量" value={storageStats?.tasks.generatedVideos ?? localUsage.totals.downloaded} />
-        <UsageMetric label="本地视频" value={storageStats?.tasks.downloadedVideos ?? localUsage.totals.downloaded} />
+        <UsageMetric label="视频任务" value={localUsage.totals.videos ?? localUsage.byMediaType?.video.requests ?? 0} />
+        <UsageMetric label="图片任务" value={localUsage.totals.images ?? localUsage.byMediaType?.image.requests ?? 0} />
+        <UsageMetric label="视频数量" value={storageStats?.tasks.generatedVideos ?? localUsage.totals.downloadedVideos ?? localUsage.totals.downloaded} />
+        <UsageMetric label="图片数量" value={storageStats?.tasks.generatedImages ?? localUsage.totals.downloadedImages ?? 0} />
+        <UsageMetric label="本地视频" value={storageStats?.tasks.downloadedVideos ?? localUsage.totals.downloadedVideos ?? localUsage.totals.downloaded} />
+        <UsageMetric label="本地图片" value={storageStats?.tasks.downloadedImages ?? localUsage.totals.downloadedImages ?? 0} />
         <UsageMetric label="SQLite" value={formatBytes(storageStats?.database.sqliteBytes ?? 0)} />
         <UsageMetric label="下载占用" value={formatBytes(storageStats?.files.downloadBytes ?? 0)} />
         <UsageMetric label="上传占用" value={formatBytes(storageStats?.files.uploadBytes ?? 0)} />
         <UsageMetric label="总占用" value={formatBytes(storageStats?.files.totalBytes ?? 0)} />
         <UsageMetric label="任务 Token" value={localUsage.totals.totalTokens} />
+        <UsageMetric label="图片 Token" value={localUsage.byMediaType?.image.totalTokens ?? 0} />
         <UsageMetric label="估算消费" value={formatCurrency(costEstimate.estimatedCost)} />
         <UsageMetric label="估算单价" value={`¥${formatDecimal(costEstimate.ratePerThousandTokens, 6)} / 千 Token`} />
       </div>
@@ -1498,6 +1841,10 @@ function UsagePanel({ localUsage, storageStats }: { localUsage: LocalUsageSummar
         ]} />}
         <UsageList title="项目请求" rows={localUsage.byProject.slice(0, 5).map((item) => [item.projectName, `${item.requests} 次 / 成功 ${item.succeeded}`])} />
         <UsageList title="模型请求" rows={localUsage.byModel.slice(0, 5).map((item) => [modelLabel(item.modelVersion), `${item.requests} 次`])} />
+        <UsageList title="媒体类型" rows={[
+          ["视频", `${localUsage.byMediaType?.video.requests ?? 0} 次 / ${formatTokenNumber(localUsage.byMediaType?.video.totalTokens ?? 0)} Token`],
+          ["图片", `${localUsage.byMediaType?.image.requests ?? 0} 次 / ${formatTokenNumber(localUsage.byMediaType?.image.totalTokens ?? 0)} Token`]
+        ]} />
         <UsageList title="最近日期" rows={localUsage.byDay.slice(-5).reverse().map((item) => [item.day, `${item.requests} 次`])} />
       </div>
     </div>
@@ -1536,6 +1883,7 @@ function formatDecimal(value: number, maximumFractionDigits = 4) {
 function ManagerProjects({
   projects,
   localUsage,
+  mediaFilter,
   granularity,
   metric,
   cardSize,
@@ -1544,6 +1892,7 @@ function ManagerProjects({
 }: {
   projects: VideoProject[];
   localUsage: LocalUsageSummary | null;
+  mediaFilter: MediaFilter;
   granularity: UsageGranularity;
   metric: UsageMetricMode;
   cardSize: ProjectCardSize;
@@ -1576,7 +1925,7 @@ function ManagerProjects({
               <span>创建 {formatDate(project.createdAt)}</span>
               <span>更新 {formatDate(project.updatedAt)}</span>
             </div>
-            <ProjectUsageChart usage={usage} granularity={granularity} metric={metric} />
+            <ProjectUsageChart usage={usage} mediaFilter={mediaFilter} granularity={granularity} metric={metric} />
             {project.deletedAt ? (
               <button className="manager-primary" disabled={busy === `restore-project-${project.id}`} onClick={() => onRestoreProject(project.id)}>
                 {busy === `restore-project-${project.id}` ? <Loader2 className="spin" size={16} /> : <RefreshCcw size={16} />}恢复项目
@@ -1603,12 +1952,34 @@ function emptyProjectUsage(project: VideoProject): ProjectUsageSummary {
     outputTokens: 0,
     totalTokens: 0,
     estimatedCost: 0,
-    buckets: { hour: [], day: [], week: [], month: [] }
+    mediaTypes: {
+      video: emptyMediaUsage(),
+      image: emptyMediaUsage()
+    },
+    buckets: { hour: [], day: [], week: [], month: [] },
+    bucketsByMediaType: {
+      video: { hour: [], day: [], week: [], month: [] },
+      image: { hour: [], day: [], week: [], month: [] }
+    }
   };
 }
 
-function ProjectUsageChart({ usage, granularity, metric }: { usage: ProjectUsageSummary; granularity: UsageGranularity; metric: UsageMetricMode }) {
-  const buckets = usage.buckets[granularity] ?? [];
+function emptyMediaUsage(): MediaUsageSummary {
+  return {
+    requests: 0,
+    succeeded: 0,
+    failed: 0,
+    hidden: 0,
+    downloaded: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCost: 0
+  };
+}
+
+function ProjectUsageChart({ usage, mediaFilter, granularity, metric }: { usage: ProjectUsageSummary; mediaFilter: MediaFilter; granularity: UsageGranularity; metric: UsageMetricMode }) {
+  const buckets = mediaFilter === "all" ? usage.buckets[granularity] ?? [] : usage.bucketsByMediaType?.[mediaFilter]?.[granularity] ?? [];
   const visibleBuckets = buckets.slice(-24);
   const maxValue = Math.max(...visibleBuckets.map((bucket) => usageBucketValue(bucket, metric)), 0);
   if (!visibleBuckets.length || maxValue <= 0) {
@@ -1680,6 +2051,7 @@ function formatTokenNumber(value: number) {
 
 function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownloadDebug }: { managerToken: string; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => Promise<void> | void; onDownloadDebug: (taskId: string) => void }) {
   const [query, setQuery] = useState("");
+  const [mediaType, setMediaType] = useState<MediaFilter>("all");
   const [status, setStatus] = useState<"all" | VideoTask["status"] | "hidden">("all");
   const [sort, setSort] = useState<"newest" | "oldest" | "status" | "project">("newest");
   const [records, setRecords] = useState<VideoTask[]>([]);
@@ -1695,6 +2067,7 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
         limit: 50,
         before: reset ? undefined : nextCursor,
         query,
+        mediaType,
         status,
         sort
       }), {
@@ -1714,7 +2087,7 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
     setNextCursor(undefined);
     setHasMore(false);
     void loadMoreManagerRecords(true);
-  }, [managerToken, query, status, sort]);
+  }, [managerToken, query, mediaType, status, sort]);
 
   async function handleHardDelete(taskId: string) {
     await onHardDelete(taskId);
@@ -1726,6 +2099,11 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
     <section className="manager-records">
       <div className="manager-record-tools">
         <label><Search size={16} /><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="搜索提示词 / 项目 / 模型 / ID" /></label>
+        <select value={mediaType} onChange={(event) => setMediaType(event.currentTarget.value as MediaFilter)}>
+          <option value="all">全部类型</option>
+          <option value="video">视频</option>
+          <option value="image">图片</option>
+        </select>
         <select value={status} onChange={(event) => setStatus(event.currentTarget.value as typeof status)}>
           <option value="all">全部状态</option>
           <option value="succeeded">成功</option>
@@ -1746,7 +2124,7 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
       {records.map((task) => (
         <article className={`manager-record-card ${task.status}`} key={task.id}>
           <div className="manager-record-preview">
-            {videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls preload="none" /> : <TaskPlaceholder status={task.status} />}
+            {imagePreviewUrl(task) ? <img src={imagePreviewUrl(task)} loading="lazy" alt={task.prompt} /> : videoPreviewUrl(task) ? <video src={videoPreviewUrl(task)} controls preload="none" /> : <TaskPlaceholder status={task.status} />}
           </div>
           <div className="manager-record-body">
             <div className="manager-record-meta">
@@ -1756,7 +2134,7 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
             </div>
             <p>{task.prompt}</p>
             <div className="manager-record-foot">
-              <span>{task.downloadPath ? "本地视频" : task.videoUrl ? "远程视频" : "未生成"}</span>
+              <span>{mediaAssetLabel(task)}</span>
               <span>{formatTokenUsage(resolveClientTokenUsage(task))}</span>
               <button className="hard-delete secondary" onClick={() => onDownloadDebug(task.id)}>
                 <Download size={15} />下载状态
@@ -1797,11 +2175,11 @@ function UsageList({ title, rows }: { title: string; rows: string[][] }) {
 }
 
 function modelLabel(value: string) {
-  return modelOptions.find((item) => item.value === value)?.label ?? value;
+  return modelOptions.find((item) => item.value === value)?.label ?? imageModelOptions.find((item) => item.value === value)?.label ?? value;
 }
 
 function downloadTaskDebug(taskId: string) {
-  window.location.href = `/api/video-tasks/${taskId}/debug`;
+  window.location.href = `/api/generation-tasks/${taskId}/debug`;
 }
 
 function formatTokenUsage(tokenUsage?: TokenUsage) {
@@ -1855,6 +2233,24 @@ function normalizeModelVersion(value?: string): VideoModelVersion {
   return modelOptions.find((item) => item.value === value)?.value ?? defaultModelVersion;
 }
 
+function normalizeMediaType(value?: string): MediaType {
+  return value === "image" ? "image" : "video";
+}
+
+function normalizeMode(value?: string): VideoMode {
+  return value === "multimodal" || value === "frames" ? value : "frames";
+}
+
+function normalizeReferenceTransport(value?: string): ReferenceTransport {
+  return value === "asset" ? "asset" : "url";
+}
+
+function normalizeImageModel(value?: string): ImageModelVersion {
+  if (value === "image2") return defaultImageModel;
+  if (value === "image2-pro") return "gpt-image-2-pro";
+  return imageModelOptions.find((item) => item.value === value)?.value ?? defaultImageModel;
+}
+
 function allowedResolutions(modelVersion: VideoModelVersion): VideoResolution[] {
   return modelVersion === "doubao-seedance-2-0-fast-260128"
     ? ["480p", "720p"]
@@ -1865,6 +2261,61 @@ function normalizeResolution(value: string | undefined, modelVersion: VideoModel
   const fallback: VideoResolution = "720p";
   const resolution = resolutionOptions.find((item) => item === value) ?? fallback;
   return allowedResolutions(modelVersion).includes(resolution) ? resolution : fallback;
+}
+
+function normalizeDuration(value: number | undefined) {
+  return durationOptions.includes(value ?? 0) ? value! : 5;
+}
+
+function normalizeVideoRatio(value: string | undefined): VideoRatio {
+  return ratioOptions.find((item) => item === value) ?? "16:9";
+}
+
+function normalizeImageRatio(value: string | undefined): ImageRatio {
+  if (imageRatioOptions.some((item) => item === value)) return value as ImageRatio;
+  const legacySize = imageSizeOptionForValue(value);
+  return legacySize?.ratio ?? defaultImageRatio;
+}
+
+function normalizeImageResolution(value: string | undefined, ratio?: string, size?: string): ImageResolution {
+  const bySize = imageSizeOptionForValue(size);
+  return imageResolutionOptions.find((item) => item.value === value)?.value ?? bySize?.resolution ?? defaultImageResolution;
+}
+
+function normalizeImageQuality(value: string | undefined): ImageQuality {
+  return imageQualityOptions.find((item) => item.value === value)?.value ?? defaultImageQuality;
+}
+
+function imageSizeFor(ratio: ImageRatio, resolution: ImageResolution) {
+  const value = resolveImageSizeLabelValue(ratio, resolution);
+  return imageSizeOptions.find((item) => item.value === value) ?? {
+    value,
+    ratio,
+    resolution,
+    label: formatImageSize(value)
+  };
+}
+
+function imageSizeOptionForValue(value: string | undefined) {
+  return imageSizeOptions.find((item) => item.value === value);
+}
+
+function imageResolutionLabel(value: ImageResolution) {
+  return imageResolutionOptions.find((item) => item.value === value)?.label ?? value.toUpperCase();
+}
+
+function imageQualityLabel(value: ImageQuality) {
+  return imageQualityOptions.find((item) => item.value === value)?.short ?? value;
+}
+
+function resolveImageSizeLabelValue(ratio: ImageRatio, resolution: ImageResolution): ImageSize {
+  const [baseWidth, baseHeight] = imageRatioBaseSizes[ratio];
+  const scale = imageResolutionScale[resolution];
+  return `${baseWidth * scale}x${baseHeight * scale}` as ImageSize;
+}
+
+function formatImageSize(value: ImageSize) {
+  return value.replace("x", " x ");
 }
 
 function formatDate(value: string) {

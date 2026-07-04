@@ -1,4 +1,4 @@
-import type { AssetType, ReferenceTransport, VideoMode, VideoModelVersion, VideoRatio, VideoReferenceInput, VideoResolution } from "./lib/payloads.js";
+import type { AssetType, GenerationRatio, ImageModelVersion, ImageQuality, ImageResolution, ImageSize, MediaType, ReferenceTransport, VideoMode, VideoModelVersion, VideoReferenceInput, VideoResolution } from "./lib/payloads.js";
 
 export interface AssetGroup {
   id: string;
@@ -28,6 +28,8 @@ export interface Asset {
 
 export interface VideoTask {
   id: string;
+  mediaType?: MediaType;
+  provider?: string;
   projectId?: string;
   remoteTaskId?: string;
   prompt: string;
@@ -35,7 +37,7 @@ export interface VideoTask {
   mode?: VideoMode;
   referenceTransport?: ReferenceTransport;
   modelVersion?: VideoModelVersion;
-  ratio?: VideoRatio;
+  ratio?: GenerationRatio;
   duration?: number;
   resolution?: VideoResolution;
   references?: VideoReferenceInput[];
@@ -44,6 +46,12 @@ export interface VideoTask {
   tokenUsage?: TokenUsage;
   videoUrl?: string;
   downloadPath?: string;
+  imageModel?: ImageModelVersion | string;
+  imageSize?: ImageSize;
+  imageResolution?: ImageResolution;
+  imageQuality?: ImageQuality;
+  imageUrls?: string[];
+  imageDownloadPaths?: string[];
   hiddenAt?: string;
   raw?: unknown;
   createdAt: string;
@@ -92,7 +100,12 @@ export interface RuntimeSettings {
   pollTimeoutSeconds: string;
   maxPollRetryCount: string;
   maxConcurrentVideoTasks: string;
+  maxConcurrentImageTasks?: string;
   tokenPricePerThousand: string;
+  imageTokenPricePerThousand?: string;
+  image2APIKey?: string;
+  image2APIURL?: string;
+  image2Model?: string;
 }
 
 export interface StorageStats {
@@ -119,6 +132,8 @@ export interface StorageStats {
     queued: number;
     generatedVideos: number;
     downloadedVideos: number;
+    generatedImages: number;
+    downloadedImages: number;
   };
 }
 

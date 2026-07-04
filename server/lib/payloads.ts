@@ -1,9 +1,16 @@
 export type AssetType = "Image" | "Video" | "Audio";
+export type MediaType = "video" | "image";
 export type VideoMode = "text" | "multimodal" | "frames";
 export type ReferenceTransport = "asset" | "url";
 export type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";
 export type VideoRatio = "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
 export type VideoResolution = "480p" | "720p" | "1080p";
+export type ImageModelVersion = "gpt-image-2" | "gpt-image-2-pro";
+export type ImageRatio = "2:1" | "16:9" | "3:2" | "1:1" | "2:3" | "9:16";
+export type GenerationRatio = VideoRatio | ImageRatio;
+export type ImageResolution = "1k" | "2k";
+export type ImageQuality = "auto" | "low" | "medium" | "high";
+export type ImageSize = `${number}x${number}`;
 export type VideoReferenceRole = "reference" | "first_frame" | "last_frame";
 
 export const videoModelVersions: VideoModelVersion[] = [
@@ -14,6 +21,56 @@ export const videoModelVersions: VideoModelVersion[] = [
 export const videoRatios: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 export const videoDurations = Array.from({ length: 12 }, (_, index) => index + 4);
 export const videoResolutions: VideoResolution[] = ["480p", "720p", "1080p"];
+export const imageModelVersions: ImageModelVersion[] = ["gpt-image-2", "gpt-image-2-pro"];
+export const imageRatios: ImageRatio[] = ["2:1", "16:9", "3:2", "1:1", "2:3", "9:16"];
+export const imageResolutions: ImageResolution[] = ["1k", "2k"];
+export const imageQualities: ImageQuality[] = ["auto", "low", "medium", "high"];
+const imageRatioBaseSizes: Record<ImageRatio, readonly [number, number]> = {
+  "2:1": [2048, 1024],
+  "16:9": [1792, 1024],
+  "3:2": [1536, 1024],
+  "1:1": [1024, 1024],
+  "2:3": [1024, 1536],
+  "9:16": [1024, 1792]
+};
+const imageResolutionScale: Record<ImageResolution, number> = {
+  "1k": 1,
+  "2k": 2
+};
+export const imageSizeOptions: Array<{ size: ImageSize; ratio: ImageRatio; resolution: ImageResolution }> = imageRatios.flatMap((ratio) => {
+  const [baseWidth, baseHeight] = imageRatioBaseSizes[ratio];
+  return imageResolutions.map((resolution) => {
+    const scale = imageResolutionScale[resolution];
+    return {
+      size: `${baseWidth * scale}x${baseHeight * scale}` as ImageSize,
+      ratio,
+      resolution
+    };
+  });
+});
+export const imageSizes: ImageSize[] = imageSizeOptions.map((item) => item.size);
+
+export function resolveImageSize(ratio: ImageRatio, resolution: ImageResolution): ImageSize {
+  const [baseWidth, baseHeight] = imageRatioBaseSizes[ratio];
+  const scale = imageResolutionScale[resolution];
+  return `${baseWidth * scale}x${baseHeight * scale}` as ImageSize;
+}
+
+export function imageSizeOptionForSize(size: string | undefined) {
+  return imageSizeOptions.find((item) => item.size === size);
+}
+
+export function supportedImageResolutionsForRatio(ratio: ImageRatio) {
+  return imageSizeOptions
+    .filter((item) => item.ratio === ratio)
+    .map((item) => item.resolution);
+}
+
+export function supportedImageRatiosForResolution(resolution: ImageResolution) {
+  return imageSizeOptions
+    .filter((item) => item.resolution === resolution)
+    .map((item) => item.ratio);
+}
 
 export interface CreateAssetGroupInput {
   name: string;

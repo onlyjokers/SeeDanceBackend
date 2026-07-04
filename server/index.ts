@@ -3,12 +3,14 @@ import { mkdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { z } from "zod";
 import { loadConfig, publicConfig } from "./lib/config.js";
-import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createVideoTask, createVideoProject, ensureDefaultVideoProject, getExecutorVideoTaskPage, getManagerVideoTaskPage, getRuntimeSettings, getStorageStats, hardDeleteVideoTaskRecord, hideVideoTaskRecord, renameVideoProject, restoreVideoProject, softDeleteVideoProject, updateRuntimeSettings } from "./lib/db.js";
+import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createImageTask, createVideoTask, createVideoProject, ensureDefaultVideoProject, getExecutorVideoTaskPage, getManagerVideoTaskPage, getRuntimeSettings, getStorageStats, hardDeleteVideoTaskRecord, hideVideoTaskRecord, mediaTypeOf, renameVideoProject, restoreVideoProject, softDeleteVideoProject, updateRuntimeSettings } from "./lib/db.js";
 import { AssetsClient } from "./lib/assetsClient.js";
 import { VideoClient } from "./lib/videoClient.js";
+import { ImageClient } from "./lib/imageClient.js";
 import { SerialTaskRunner } from "./lib/taskRunner.js";
+import { ImageTaskRunner } from "./lib/imageTaskRunner.js";
 import { validatePublicAssetUrl, type AssetType, type VideoReferenceInput } from "./lib/payloads.js";
-import { parseVideoTaskRequest } from "./lib/requestSchemas.js";
+import { parseImageTaskRequest, parseVideoTaskRequest } from "./lib/requestSchemas.js";
 import { getDownloadPathForTask, openDownloadFolder } from "./lib/downloadFolder.js";
 import { uploadImageToTemporaryHost } from "./lib/uploadProvider.js";
 import { mountStaticClient } from "./lib/staticRouter.js";
@@ -27,7 +29,9 @@ await mkdir(config.uploadDir, { recursive: true });
 
 const assetsClient = new AssetsClient(config, () => getRuntimeSettings(db, config));
 const videoClient = new VideoClient(config, () => getRuntimeSettings(db, config));
+const imageClient = new ImageClient(config, () => getRuntimeSettings(db, config));
 const runner = new SerialTaskRunner(db, videoClient, config, () => getRuntimeSettings(db, config));
+const imageRunner = new ImageTaskRunner(db, imageClient, config, () => getRuntimeSettings(db, config));
 const app = express();
 const managerToken = "sts-manager-session";
 
@@ -41,6 +45,9 @@ app.get("/api/config", asyncHandler(async (_req, res) => {
     arkVideoModel: settings.arkVideoModel,
     arkBaseURL: settings.arkBaseURL,
     imageHostURL: settings.imageHostURL,
+    image2APIKeyConfigured: Boolean(settings.image2APIKey),
+    image2APIURL: settings.image2APIURL,
+    image2Model: settings.image2Model,
     assetsCredentialsConfigured: Boolean(settings.volcengineAK && settings.volcengineSK)
   });
 }));
@@ -235,12 +242,61 @@ app.post("/api/video-tasks", asyncHandler(async (req, res) => {
   res.json(task);
 }));
 
+app.post("/api/generation-tasks", asyncHandler(async (req, res) => {
+  if (req.body?.mediaType === "image") {
+    const input = parseImageTaskRequest(req.body);
+    await getRuntimeSettings(db, config);
+    const task = await createImageTask(db, input);
+    imageRunner.enqueue(task.id, async (context) => {
+      const settings = await getRuntimeSettings(db, config);
+      const refreshed = await refreshTemporaryReferences(input.references, settings, context);
+      const references = await prepareImageReferences(refreshed);
+      return imageClient.generate({
+        prompt: input.prompt,
+        ratio: input.ratio,
+        imageResolution: input.imageResolution,
+        imageQuality: input.imageQuality,
+        size: input.size,
+        imageModel: input.imageModel,
+        references
+      });
+    });
+    return res.json(task);
+  }
+
+  const input = parseVideoTaskRequest({ ...req.body, mediaType: "video" });
+  const task = await createVideoTask(db, input, input.references.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
+  runner.enqueue(task.id, async (context) => {
+    const settings = await getRuntimeSettings(db, config);
+    const refreshedInputReferences = await refreshTemporaryReferences(input.references, settings, context);
+    const references = input.referenceTransport === "asset"
+      ? await prepareAssetReferences(refreshedInputReferences, settings, context)
+      : refreshedInputReferences;
+    return videoClient.createTask({
+      modelVersion: input.modelVersion,
+      prompt: input.prompt,
+      mode: input.mode,
+      ratio: input.ratio,
+      duration: input.duration,
+      resolution: input.resolution,
+      references
+    });
+  });
+  return res.json(task);
+}));
+
 app.get("/api/executor/tasks", asyncHandler(async (req, res) => {
   const input = taskPageQuerySchema.parse(req.query);
   res.json(getExecutorVideoTaskPage(db.data, input));
 }));
 
 app.get("/api/manager/video-tasks", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const input = managerTaskPageQuerySchema.parse(req.query);
+  res.json(getManagerVideoTaskPage(db.data, input));
+}));
+
+app.get("/api/manager/generation-tasks", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
   const input = managerTaskPageQuerySchema.parse(req.query);
   res.json(getManagerVideoTaskPage(db.data, input));
@@ -259,7 +315,30 @@ app.get("/api/video-tasks/:id/download", asyncHandler(async (req, res) => {
   res.download(path);
 }));
 
+app.get("/api/generation-tasks/:id/file/:index", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const task = db.data.videoTasks.find((item) => item.id === id);
+  if (!task) return res.status(404).json({ error: "生成任务不存在。" });
+  if (mediaTypeOf(task) === "video") {
+    if (routeParam(req.params.index) !== "0") return res.status(404).json({ error: "视频任务只有一个文件。" });
+    const path = getDownloadPathForTask(task);
+    return res.download(path);
+  }
+  const index = Number(routeParam(req.params.index));
+  const path = Number.isInteger(index) ? task.imageDownloadPaths?.[index] : undefined;
+  if (!path) return res.status(404).json({ error: "这个图片任务还没有对应的本地文件。" });
+  return res.sendFile(resolve(path));
+}));
+
 app.get("/api/video-tasks/:id/debug", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const debugExport = buildTaskDebugExport(db.data, id);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="seendance-task-${id}-debug.json"`);
+  res.send(JSON.stringify(debugExport, null, 2));
+}));
+
+app.get("/api/generation-tasks/:id/debug", asyncHandler(async (req, res) => {
   const id = routeParam(req.params.id);
   const debugExport = buildTaskDebugExport(db.data, id);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -273,7 +352,20 @@ app.delete("/api/video-tasks/:id", asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.delete("/api/generation-tasks/:id", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  await hideVideoTaskRecord(db, id);
+  res.json({ ok: true });
+}));
+
 app.delete("/api/manager/video-tasks/:id", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  const id = routeParam(req.params.id);
+  await hardDeleteVideoTaskRecord(db, id);
+  res.json({ ok: true });
+}));
+
+app.delete("/api/manager/generation-tasks/:id", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
   const id = routeParam(req.params.id);
   await hardDeleteVideoTaskRecord(db, id);
@@ -340,12 +432,18 @@ const runtimeSettingsSchema = z.object({
   pollTimeoutSeconds: z.string().trim().min(1),
   maxPollRetryCount: z.string().trim().min(1),
   maxConcurrentVideoTasks: z.string().trim().min(1),
-  tokenPricePerThousand: z.string().trim().min(1)
+  maxConcurrentImageTasks: z.string().trim().min(1),
+  tokenPricePerThousand: z.string().trim().min(1),
+  imageTokenPricePerThousand: z.string().trim().min(1),
+  image2APIKey: z.string().trim(),
+  image2APIURL: z.string().trim().url(),
+  image2Model: z.string().trim().min(1)
 });
 
 const positiveLimitSchema = z.coerce.number().int().min(1).max(100).optional();
 const taskPageQuerySchema = z.object({
   projectId: z.string().optional(),
+  mediaType: z.enum(["all", "video", "image"]).optional(),
   limit: positiveLimitSchema,
   before: z.string().optional()
 });
@@ -392,6 +490,27 @@ async function prepareAssetReferences(references: VideoReferenceInput[], setting
       assetId: activeAsset.id,
       sourceUrl: undefined
     });
+  }
+  return prepared;
+}
+
+async function prepareImageReferences(references: VideoReferenceInput[]) {
+  const prepared: VideoReferenceInput[] = [];
+  for (const reference of references) {
+    if (reference.assetId) {
+      const existing = db.data.assets.find((asset) => asset.id === reference.assetId);
+      if (!existing) throw new Error("选择的素材不存在。");
+      if (existing.status !== "Active") throw new Error("只有 Active 状态的素材可以用于图片生成。");
+      prepared.push({
+        ...reference,
+        sourceUrl: existing.url
+      });
+      continue;
+    }
+    if (!reference.sourceUrl) throw new Error("参考图片缺少公网 URL。");
+    const validation = validatePublicAssetUrl(reference.sourceUrl);
+    if (!validation.ok) throw new Error(validation.message);
+    prepared.push(reference);
   }
   return prepared;
 }

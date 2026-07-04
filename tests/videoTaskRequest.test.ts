@@ -8,6 +8,7 @@ describe("video task request schema", () => {
       prompt: "城市街道延时摄影",
       references: []
     })).toEqual({
+      mediaType: "video",
       mode: "text",
       prompt: "城市街道延时摄影",
       referenceTransport: "url",

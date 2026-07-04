@@ -1,4 +1,4 @@
-import type { AppConfig } from "./config.js";
+import { normalizeImage2APIURL, normalizeImage2Model, type AppConfig } from "./config.js";
 import type { RuntimeSettings } from "../types.js";
 
 export function runtimeSettingsFromConfig(config: AppConfig): RuntimeSettings {
@@ -22,7 +22,12 @@ export function runtimeSettingsFromConfig(config: AppConfig): RuntimeSettings {
     pollTimeoutSeconds: String(config.pollTimeoutMs / 1000),
     maxPollRetryCount: String(config.maxPollRetryCount),
     maxConcurrentVideoTasks: String(config.maxConcurrentVideoTasks),
-    tokenPricePerThousand: String(config.tokenPricePerThousand)
+    maxConcurrentImageTasks: String(config.maxConcurrentImageTasks ?? 8),
+    tokenPricePerThousand: String(config.tokenPricePerThousand),
+    imageTokenPricePerThousand: String(config.imageTokenPricePerThousand ?? config.tokenPricePerThousand),
+    image2APIKey: config.image2APIKey ?? "",
+    image2APIURL: normalizeImage2APIURL(config.image2APIURL ?? "https://www.cctq.ai/v1/images/generations"),
+    image2Model: normalizeImage2Model(config.image2Model ?? "gpt-image-2")
   };
 }
 

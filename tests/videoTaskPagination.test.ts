@@ -24,6 +24,7 @@ describe("video task pagination", () => {
       task({ id: "t4", projectId: "p1", createdAt: "2026-05-04T10:00:00.000Z", status: "running" }),
       task({ id: "t3", projectId: "p1", createdAt: "2026-05-03T10:00:00.000Z", prompt: "火锅广告" }),
       task({ id: "t2", projectId: "p1", createdAt: "2026-05-02T10:00:00.000Z", status: "failed" }),
+      task({ id: "image-task", mediaType: "image", projectId: "p1", createdAt: "2026-05-01T12:00:00.000Z", prompt: "图片任务" }),
       task({ id: "t1", projectId: "p1", createdAt: "2026-05-01T10:00:00.000Z", hiddenAt: "2026-05-01T11:00:00.000Z" }),
       task({ id: "deleted-project-task", projectId: "p2", createdAt: "2026-05-05T10:00:00.000Z" })
     ]
@@ -35,8 +36,16 @@ describe("video task pagination", () => {
 
     expect(first.items.map((item) => item.id)).toEqual(["t4", "t3"]);
     expect(first.hasMore).toBe(true);
-    expect(second.items.map((item) => item.id)).toEqual(["t2"]);
+    expect(second.items.map((item) => item.id)).toEqual(["t2", "image-task"]);
     expect(second.hasMore).toBe(false);
+  });
+
+  it("filters task pages by media type", () => {
+    const images = getExecutorVideoTaskPage(data, { projectId: "p1", mediaType: "image", limit: 10 });
+    const videos = getManagerVideoTaskPage(data, { projectId: "p1", mediaType: "video", limit: 10 });
+
+    expect(images.items.map((item) => item.id)).toEqual(["image-task"]);
+    expect(videos.items.map((item) => item.id)).not.toContain("image-task");
   });
 
   it("pages manager tasks with filters and stable cursors", () => {
@@ -54,7 +63,7 @@ describe("video task pagination", () => {
     const first = getManagerVideoTaskPage(data, { limit: 2, sort: "oldest" });
     const second = getManagerVideoTaskPage(data, { limit: 2, sort: "oldest", before: first.nextCursor });
 
-    expect(first.items.map((item) => item.id)).toEqual(["t1", "t2"]);
-    expect(second.items.map((item) => item.id)).toEqual(["t3", "t4"]);
+    expect(first.items.map((item) => item.id)).toEqual(["t1", "image-task"]);
+    expect(second.items.map((item) => item.id)).toEqual(["t2", "t3"]);
   });
 });
