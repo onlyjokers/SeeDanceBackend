@@ -65,7 +65,7 @@ describe("ImageClient", () => {
     vi.restoreAllMocks();
   });
 
-  it("downloads reference images and sends image2 edits as multipart form data", async () => {
+  it("downloads one reference image and sends image2 edits as Micu multipart image form data", async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       const value = String(url);
       if (value === "https://example.test/ref.png") {
@@ -97,6 +97,7 @@ describe("ImageClient", () => {
 
     expect(result.imageUrls).toEqual(["https://example.test/result.png"]);
     expect(result.tokenUsage).toEqual({ inputTokens: 11, outputTokens: 22, totalTokens: 33 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenNthCalledWith(1, "https://example.test/ref.png");
     expect(fetchMock).toHaveBeenNthCalledWith(2, "https://www.cctq.ai/v1/images/edits", expect.objectContaining({
       method: "POST",
@@ -109,16 +110,78 @@ describe("ImageClient", () => {
     expect(body).toBeInstanceOf(FormData);
     const formData = body as FormData;
     expect(formData.get("model")).toBe("gpt-image-2");
-    expect(formData.get("model_name")).toBe("gpt-image-2");
-    expect(formData.get("modelName")).toBe("gpt-image-2");
     expect(formData.get("prompt")).toBe("生成一张产品图");
     expect(formData.get("size")).toBe("2048x2048");
     expect(formData.get("quality")).toBe("medium");
     expect(formData.get("n")).toBe("1");
-    const images = formData.getAll("image[]");
-    expect(images).toHaveLength(1);
-    expect(images[0]).toBeInstanceOf(Blob);
-    expect((images[0] as Blob).type).toBe("image/png");
+    expect(formData.get("response_format")).toBe("url");
+    expect(formData.get("image")).toBeInstanceOf(Blob);
+    expect(formData.getAll("image[]")).toHaveLength(0);
+    expect(formData.get("tools")).toBeNull();
+    expect(formData.get("tool_choice")).toBeNull();
+  });
+
+  it("normalizes chat completions settings to image edit endpoints for reference image generation", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const value = String(url);
+      if (value === "https://example.test/ref.png") {
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          headers: { "Content-Type": "image/png" }
+        });
+      }
+      if (value === "https://www.cctq.ai/v1/images/edits") {
+        return new Response(JSON.stringify({ data: [{ url: "https://example.test/result.png" }] }));
+      }
+      throw new Error(`unexpected fetch: ${value}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ImageClient(config, () => ({
+      ...runtimeSettings,
+      image2APIURL: "https://www.cctq.ai/v1/chat/completions"
+    }));
+    await client.generate({
+      prompt: "参考图编辑",
+      ratio: "16:9",
+      imageResolution: "2k",
+      imageQuality: "high",
+      references: [{ role: "reference", assetType: "Image", sourceUrl: "https://example.test/ref.png" }]
+    });
+
+    expect(fetchMock.mock.calls[1][0]).toBe("https://www.cctq.ai/v1/images/edits");
+  });
+
+  it("sends multiple reference images as repeated image array form parts", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const value = String(url);
+      if (value.startsWith("https://example.test/ref-")) {
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          headers: { "Content-Type": "image/png" }
+        });
+      }
+      if (value === "https://www.cctq.ai/v1/images/edits") {
+        return new Response(JSON.stringify({ data: [{ url: "https://example.test/result.png" }] }));
+      }
+      throw new Error(`unexpected fetch: ${value}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ImageClient(config, () => runtimeSettings);
+    await client.generate({
+      prompt: "融合多张参考图",
+      ratio: "1:1",
+      imageResolution: "1k",
+      imageQuality: "auto",
+      references: [
+        { role: "reference", assetType: "Image", sourceUrl: "https://example.test/ref-1.png" },
+        { role: "reference", assetType: "Image", sourceUrl: "https://example.test/ref-2.png" }
+      ]
+    });
+
+    const formData = fetchMock.mock.calls[2][1]?.body as FormData;
+    expect(formData.get("image")).toBeNull();
+    expect(formData.getAll("image[]")).toHaveLength(2);
+    expect(formData.get("response_format")).toBe("url");
   });
 
   it("supports pure prompt generation without reference images", async () => {
@@ -145,6 +208,29 @@ describe("ImageClient", () => {
     expect(body.size).toBe("1792x1024");
     expect(body.quality).toBe("auto");
     expect(body).not.toHaveProperty("image_urls");
+  });
+
+  it("includes the normalized endpoint in image API errors", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({
+        error: { message: "Tool choice 'image_generation' not found in 'tools' parameter." }
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ImageClient(config, () => ({
+      ...runtimeSettings,
+      image2APIURL: "https://www.cctq.ai/v1/chat/completions"
+    }));
+    await expect(client.generate({
+      prompt: "纯文字生成",
+      ratio: "16:9",
+      imageResolution: "1k",
+      imageQuality: "auto",
+      references: []
+    })).rejects.toThrow("endpoint=https://www.cctq.ai/v1/images/generations");
   });
 
   it("maps 2k square requests to the documented 2048 size", async () => {

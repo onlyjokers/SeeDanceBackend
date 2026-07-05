@@ -122,7 +122,7 @@ export class ImageClient {
     const text = await response.text();
     const decoded = text ? JSON.parse(text) : {};
     if (!response.ok) {
-      throw new Error(`图片 API 调用失败：${response.status} ${text}`);
+      throw new Error(`图片 API 调用失败：${response.status} endpoint=${endpoint} ${text}`);
     }
     return decoded;
   }
@@ -138,7 +138,7 @@ export class ImageClient {
     const text = await response.text();
     const decoded = text ? JSON.parse(text) : {};
     if (!response.ok) {
-      throw new Error(`图片 API 调用失败：${response.status} ${text}`);
+      throw new Error(`图片 API 调用失败：${response.status} endpoint=${endpoint} ${text}`);
     }
     return decoded;
   }
@@ -165,11 +165,13 @@ export async function buildImageEditFormData(input: ImageGenerationInput, model:
   for (const [key, value] of Object.entries(payload)) {
     formData.set(key, String(value));
   }
+  formData.set("response_format", "url");
   formData.set("model_name", model);
   formData.set("modelName", model);
+  const imageFieldName = imageUrls.length === 1 ? "image" : "image[]";
   for (const [index, imageUrl] of imageUrls.entries()) {
     const file = await fetchReferenceImage(imageUrl, index);
-    formData.append("image[]", file.blob, file.filename);
+    formData.append(imageFieldName, file.blob, file.filename);
   }
   return formData;
 }
