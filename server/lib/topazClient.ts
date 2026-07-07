@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir, stat } from "node:fs/promises";
-import { basename, extname, resolve } from "node:path";
+import { basename, extname, isAbsolute, relative, resolve, win32 } from "node:path";
 import type { AppConfig } from "./config.js";
 import type { RuntimeSettings, TopazTaskMetadata } from "../types.js";
 
@@ -53,14 +53,13 @@ export class TopazClient {
         ? outputPath
         : resolve(workDir, `${input.taskId}-topaz-step-${index + 1}${extension}`);
       const args = [
-        "--json",
         "process",
         currentInputPath,
         stepOutputPath,
         "--model",
         mode,
         "--ai-model",
-        input.topaz.aiModel || input.settings.topazDefaultAIModel || this.config.topazDefaultAIModel || "proteus",
+        resolveTopazAIModel(input.topaz.aiModel || input.settings.topazDefaultAIModel || this.config.topazDefaultAIModel || "prob-4"),
         "--scale",
         String(scale),
         "--codec",
@@ -73,6 +72,7 @@ export class TopazClient {
         if (value === undefined || value === "") continue;
         args.push(`--${key}`, String(value));
       }
+      args.push("--json");
       rawSteps.push(await runTopazJSON(cliPath, args, workDir));
       currentInputPath = stepOutputPath;
     }
@@ -89,7 +89,7 @@ export class TopazClient {
   }
 
   private async probe(cliPath: string, sourcePath: string): Promise<TopazSourceInfo> {
-    const raw = await runTopazJSON(cliPath, ["--json", "probe", sourcePath], undefined);
+    const raw = await runTopazJSON(cliPath, ["probe", sourcePath, "--json"], undefined);
     const record = isRecord(raw) ? raw : {};
     return {
       width: numberField(record.width),
@@ -118,15 +118,46 @@ export function scaleForTopazTarget(source: { width?: number; height?: number },
 }
 
 export function assertControlledTopazSourcePath(path: string, roots: { uploadDir: string; downloadDir: string }) {
-  const absolute = resolve(path);
-  const uploadRoot = resolve(roots.uploadDir);
-  const downloadRoot = resolve(roots.downloadDir);
+  const pathTools = usesWindowsPath(path) || usesWindowsPath(roots.uploadDir) || usesWindowsPath(roots.downloadDir)
+    ? {
+      resolve: win32.resolve,
+      relative: win32.relative,
+      isAbsolute: win32.isAbsolute
+    }
+    : { resolve, relative, isAbsolute };
+  const absolute = pathTools.resolve(path);
+  const uploadRoot = pathTools.resolve(roots.uploadDir);
+  const downloadRoot = pathTools.resolve(roots.downloadDir);
   if (isInside(absolute, uploadRoot) || isInside(absolute, downloadRoot)) return absolute;
   throw new Error("源视频必须来自本地上传目录或已生成下载目录。");
 }
 
 function isInside(path: string, root: string) {
-  return path === root || path.startsWith(`${root}/`);
+  const pathTools = usesWindowsPath(path) || usesWindowsPath(root)
+    ? {
+      relative: win32.relative,
+      isAbsolute: win32.isAbsolute,
+      normalize: (value: string) => value.replace(/\\/g, "/").toLowerCase()
+    }
+    : {
+      relative,
+      isAbsolute,
+      normalize: (value: string) => value
+    };
+  const normalizedPath = pathTools.normalize(path);
+  const normalizedRoot = pathTools.normalize(root);
+  const child = pathTools.relative(normalizedRoot, normalizedPath);
+  return child === "" || (!child.startsWith("..") && !pathTools.isAbsolute(child));
+}
+
+function usesWindowsPath(value: string) {
+  return /^[a-zA-Z]:[\\/]/.test(value) || value.includes("\\");
+}
+
+export function resolveTopazAIModel(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "proteus") return "prob-4";
+  return value;
 }
 
 async function runTopazJSON(command: string, args: string[], cwd?: string): Promise<unknown> {

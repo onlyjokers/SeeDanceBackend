@@ -27,7 +27,7 @@ export function runtimeSettingsFromConfig(config: AppConfig): RuntimeSettings {
     topazCLIPath: config.topazCLIPath ?? "topaz-video",
     topazWorkDir: config.topazWorkDir ?? "data/topaz",
     maxConcurrentTopazTasks: String(config.maxConcurrentTopazTasks ?? 1),
-    topazDefaultAIModel: config.topazDefaultAIModel ?? "proteus",
+    topazDefaultAIModel: config.topazDefaultAIModel ?? "prob-4",
     tokenPricePerThousand: String(config.tokenPricePerThousand),
     imageTokenPricePerThousand: String(config.imageTokenPricePerThousand ?? config.tokenPricePerThousand),
     image2APIKey: config.image2APIKey ?? "",

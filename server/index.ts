@@ -63,7 +63,7 @@ app.get("/api/config", asyncHandler(async (_req, res) => {
     image2APIKeyConfigured: Boolean(settings.image2APIKey),
     image2APIURL: settings.image2APIURL,
     image2Model: settings.image2Model,
-    topazEnabled: settings.topazEnabled === "true",
+    topazEnabled: isEnabledSetting(settings.topazEnabled),
     topazCLIPath: settings.topazCLIPath,
     topazWorkDir: settings.topazWorkDir,
     maxConcurrentTopazTasks: settings.maxConcurrentTopazTasks,
@@ -134,7 +134,7 @@ app.get("/api/v1/config", asyncHandler(async (_req, res) => {
     image2APIKeyConfigured: Boolean(settings.image2APIKey),
     image2APIURL: settings.image2APIURL,
     image2Model: settings.image2Model,
-    topazEnabled: settings.topazEnabled === "true",
+    topazEnabled: isEnabledSetting(settings.topazEnabled),
     topazCLIPath: settings.topazCLIPath,
     topazWorkDir: settings.topazWorkDir,
     maxConcurrentTopazTasks: settings.maxConcurrentTopazTasks,
@@ -640,11 +640,15 @@ function isManagerRequest(req: express.Request) {
   return req.headers["x-sts-manager-token"] === managerToken;
 }
 
+function isEnabledSetting(value: string | undefined) {
+  return ["true", "1", "yes", "on"].includes((value ?? "").trim().toLowerCase());
+}
+
 async function submitGenerationTask(req: express.Request, res: express.Response) {
   if (req.body?.taskKind === "video_upscale") {
     const input = parseTopazTaskRequest(req.body);
     const settings = await getRuntimeSettings(db, config);
-    if (settings.topazEnabled !== "true") return res.status(400).json({ error: "Topaz 视频放大未启用。" });
+    if (!isEnabledSetting(settings.topazEnabled)) return res.status(400).json({ error: "Topaz 视频放大未启用。" });
     if (input.sourceLocalPath) {
       input.sourceLocalPath = assertControlledTopazSourcePath(input.sourceLocalPath, {
         uploadDir: settings.uploadDir || config.uploadDir,

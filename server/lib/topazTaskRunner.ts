@@ -153,7 +153,7 @@ export class TopazTaskRunner {
       topazCLIPath: this.config.topazCLIPath ?? "topaz-video",
       topazWorkDir: this.config.topazWorkDir ?? "data/topaz",
       maxConcurrentTopazTasks: String(this.config.maxConcurrentTopazTasks ?? 1),
-      topazDefaultAIModel: this.config.topazDefaultAIModel ?? "proteus",
+      topazDefaultAIModel: this.config.topazDefaultAIModel ?? "prob-4",
       tokenPricePerThousand: String(this.config.tokenPricePerThousand),
       imageTokenPricePerThousand: String(this.config.imageTokenPricePerThousand ?? this.config.tokenPricePerThousand),
       image2APIKey: this.config.image2APIKey ?? "",

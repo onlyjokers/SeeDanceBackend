@@ -425,9 +425,9 @@ const topazProcessOptions: Array<{ value: TopazProcessMode; label: string }> = [
   { value: "interpolate", label: "补帧" }
 ];
 const topazTargetOptions: Array<{ value: TopazTargetPreset; label: string }> = [
-  { value: "2k", label: "2K" },
-  { value: "4k", label: "4K" },
-  { value: "8k", label: "8K" },
+  { value: "2k", label: "2K档" },
+  { value: "4k", label: "4K档" },
+  { value: "8k", label: "8K档" },
   { value: "2x", label: "2x" },
   { value: "4x", label: "4x" },
   { value: "8x", label: "8x" }
@@ -1048,7 +1048,7 @@ function App() {
 
   const canSubmit = useMemo(() => {
     if (composerKind === "video_upscale") {
-      return Boolean(config?.topazEnabled && (topazSourceTaskId || topazSourceLocalPath));
+      return Boolean(topazSourceTaskId || topazSourceLocalPath);
     }
     if (!prompt.trim() || slots.some((slot) => slot.uploading)) return false;
     if (mediaType === "image") return Boolean(config?.image2APIKeyConfigured);
@@ -1056,7 +1056,7 @@ function App() {
     const filled = slots.filter((slot) => slot.url);
     if (mode === "frames") return filled.some((slot) => slot.role === "first_frame") && filled.some((slot) => slot.role === "last_frame");
     return filled.length > 0 && filled.length <= multimodalReferenceLimit;
-  }, [composerKind, config?.arkAPIKeyConfigured, config?.image2APIKeyConfigured, config?.topazEnabled, mediaType, mode, prompt, slots, topazSourceLocalPath, topazSourceTaskId]);
+  }, [composerKind, config?.arkAPIKeyConfigured, config?.image2APIKeyConfigured, mediaType, mode, prompt, slots, topazSourceLocalPath, topazSourceTaskId]);
 
   return (
     <main className="dream-shell">
@@ -1708,7 +1708,7 @@ function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersi
     return <div className="floating-menu model-menu" style={style}><p>选择 Topaz AI 模型</p>{topazAIModelOptions.map((item) => <button key={item.value} className={topazAIModel === item.value ? "selected" : ""} onClick={() => { onTopazAIModel(item.value); onClose(); }}><Film size={18} /><span>{item.label}</span><em>{item.value}</em>{topazAIModel === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "topazTarget") {
-    return <div className="floating-menu resolution-menu" style={style}><p>选择目标规格</p>{topazTargetOptions.map((item) => <button key={item.value} className={topazTargetPreset === item.value ? "selected" : ""} onClick={() => { onTopazTargetPreset(item.value); onClose(); }}><Gauge size={18} /><span>{item.label}</span><em>{item.value.endsWith("x") ? "倍数" : "长边换算"}</em>{topazTargetPreset === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+    return <div className="floating-menu resolution-menu" style={style}><p>选择目标规格</p>{topazTargetOptions.map((item) => <button key={item.value} className={topazTargetPreset === item.value ? "selected" : ""} onClick={() => { onTopazTargetPreset(item.value); onClose(); }}><Gauge size={18} /><span>{item.label}</span><em>{item.value.endsWith("x") ? "倍数" : "按 scale 近似"}</em>{topazTargetPreset === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "topazCodec") {
     return <div className="floating-menu model-menu" style={style}><p>选择编码</p>{topazCodecOptions.map((item) => <button key={item} className={topazCodec === item ? "selected" : ""} onClick={() => { onTopazCodec(item); onClose(); }}><FilePenLine size={18} /><span>{topazCodecLabel(item)}</span><em>{item}</em>{topazCodec === item && <Check className="option-check" size={18} />}</button>)}</div>;

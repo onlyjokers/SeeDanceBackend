@@ -35,6 +35,21 @@ describe("Topaz client helpers", () => {
     })).toThrow("源视频必须来自本地上传目录或已生成下载目录");
   });
 
+  it("allows controlled Windows upload and download paths", () => {
+    expect(() => assertControlledTopazSourcePath("D:\\SeeDance\\SeeDanceTest\\data\\uploads\\source.mp4", {
+      uploadDir: "D:\\SeeDance\\SeeDanceTest\\data\\uploads",
+      downloadDir: "D:\\SeeDance\\SeeDanceTest\\data\\downloads"
+    })).not.toThrow();
+    expect(() => assertControlledTopazSourcePath("D:\\SeeDance\\SeeDanceTest\\data\\downloads\\generated.mp4", {
+      uploadDir: "D:\\SeeDance\\SeeDanceTest\\data\\uploads",
+      downloadDir: "D:\\SeeDance\\SeeDanceTest\\data\\downloads"
+    })).not.toThrow();
+    expect(() => assertControlledTopazSourcePath("D:\\SeeDance\\SeeDanceTest\\secrets\\source.mp4", {
+      uploadDir: "D:\\SeeDance\\SeeDanceTest\\data\\uploads",
+      downloadDir: "D:\\SeeDance\\SeeDanceTest\\data\\downloads"
+    })).toThrow("源视频必须来自本地上传目录或已生成下载目录");
+  });
+
   it("reports unavailable Topaz CLI paths without throwing", async () => {
     const result = await checkTopazCLIAvailable("/definitely/missing/topaz-video");
     expect(result.available).toBe(false);
@@ -53,13 +68,13 @@ describe("Topaz client helpers", () => {
 import { appendFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + "\\n");
-if (args[0] === "--json" && args[1] === "probe") {
+if (args[0] === "probe" && args.at(-1) === "--json") {
   console.log(JSON.stringify({ width: 1280, height: 720, duration: "5", bitrate: "2000k", video_codec: "h264" }));
   process.exit(0);
 }
-if (args[0] === "--json" && args[1] === "process") {
-  writeFileSync(args[3], "video");
-  console.log(JSON.stringify({ ok: true, output: args[3] }));
+if (args[0] === "process" && args.at(-1) === "--json") {
+  writeFileSync(args[2], "video");
+  console.log(JSON.stringify({ ok: true, output: args[2] }));
   process.exit(0);
 }
 process.exit(1);
@@ -134,11 +149,15 @@ process.exit(1);
     });
 
     const calls = (await readFile(callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
-    const processCalls = calls.filter((args) => args[1] === "process");
+    const probeCall = calls.find((args) => args[0] === "probe");
+    expect(probeCall).toEqual([ "probe", sourcePath, "--json" ]);
+    const processCalls = calls.filter((args) => args[0] === "process");
     expect(processCalls).toHaveLength(2);
     expect(processCalls.map((args) => args[args.indexOf("--model") + 1])).toEqual(["stabilize", "upscale"]);
-    expect(processCalls[0][3]).toContain("task-1-topaz-step-1");
-    expect(processCalls[1][2]).toContain("task-1-topaz-step-1");
+    expect(processCalls.map((args) => args[args.indexOf("--ai-model") + 1])).toEqual(["prob-4", "prob-4"]);
+    expect(processCalls[0][2]).toContain("task-1-topaz-step-1");
+    expect(processCalls[1][1]).toContain("task-1-topaz-step-1");
+    expect(processCalls.every((args) => args.at(-1) === "--json")).toBe(true);
     expect(result.outputPath).toContain("task-1-topaz.mp4");
   });
 });
