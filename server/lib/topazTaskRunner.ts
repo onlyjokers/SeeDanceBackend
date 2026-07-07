@@ -4,6 +4,7 @@ import { addPollLog, updateVideoTask } from "./db.js";
 import type { RuntimeSettings } from "../types.js";
 import { errorMessage } from "./retry.js";
 import type { TopazProcessResult } from "./topazClient.js";
+import { resolve } from "node:path";
 
 type Job = () => Promise<void>;
 type RuntimeSettingsProvider = () => RuntimeSettings | Promise<RuntimeSettings>;
@@ -110,11 +111,11 @@ export class TopazTaskRunner {
   }
 
   private async resolveSourcePath(task: RuntimeSettingsAwareTopazTask) {
-    if (task.topaz?.sourceLocalPath) return task.topaz.sourceLocalPath;
+    if (task.topaz?.sourceLocalPath) return resolve(task.topaz.sourceLocalPath);
     if (task.topaz?.sourceTaskId) {
       const source = this.db.data.videoTasks.find((item) => item.id === task.topaz?.sourceTaskId);
       if (!source?.downloadPath) throw new Error("选择的源视频还没有本地下载文件。");
-      return source.downloadPath;
+      return resolve(source.downloadPath);
     }
     throw new Error("视频放大需要选择源视频。");
   }

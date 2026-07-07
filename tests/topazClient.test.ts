@@ -1,5 +1,5 @@
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import type { AppConfig } from "../server/lib/config.js";
@@ -159,5 +159,113 @@ process.exit(1);
     expect(processCalls[1][1]).toContain("task-1-topaz-step-1");
     expect(processCalls.every((args) => args.at(-1) === "--json")).toBe(true);
     expect(result.outputPath).toContain("task-1-topaz.mp4");
+  });
+
+  it("passes absolute source and work paths to the Topaz CLI when config paths are relative", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "seendance-topaz-relative-"));
+    const previousCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const cliPath = join(dir, "fake-topaz-video.mjs");
+      const callsPath = join(dir, "calls.jsonl");
+      const relativeSourcePath = join("data", "downloads", "source.mp4");
+      await mkdir(join(dir, "data", "downloads"), { recursive: true });
+      await writeFile(relativeSourcePath, "source");
+      await writeFile(cliPath, `#!/usr/bin/env node
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ cwd: process.cwd(), args, inputExists: existsSync(args[1]) }) + "\\n");
+if (args[0] === "probe" && args.at(-1) === "--json" && existsSync(args[1])) {
+  console.log(JSON.stringify({ width: 1280, height: 720 }));
+  process.exit(0);
+}
+if (args[0] === "process" && args.at(-1) === "--json" && existsSync(args[1])) {
+  writeFileSync(args[2], "video");
+  console.log(JSON.stringify({ ok: true }));
+  process.exit(0);
+}
+process.exit(1);
+`);
+      await chmod(cliPath, 0o755);
+      const client = new TopazClient({
+        port: 8787,
+        host: "127.0.0.1",
+        databasePath: "data/db.json",
+        sqlitePath: "data/db.sqlite",
+        downloadDir: "data/downloads",
+        uploadDir: "data/uploads",
+        volcengineAK: "",
+        volcengineSK: "",
+        volcengineRegion: "cn-beijing",
+        volcengineService: "ark",
+        arkAPIKey: "",
+        arkVideoModel: "ep",
+        arkBaseURL: "https://ark.cn-beijing.volces.com",
+        imageHostURL: "https://uguu.se/upload.php",
+        assetProjectName: "",
+        pollIntervalMs: 1000,
+        pollTimeoutMs: 1000,
+        maxPollRetryCount: 1,
+        maxConcurrentVideoTasks: 1,
+        tokenPricePerThousand: 0.049085,
+        topazEnabled: true,
+        topazCLIPath: cliPath,
+        topazWorkDir: "data/topaz",
+        topazDefaultAIModel: "prob-4",
+        corsOrigin: ""
+      } satisfies AppConfig);
+
+      await client.process({
+        taskId: "relative-task",
+        sourcePath: relativeSourcePath,
+        settings: {
+          port: "8787",
+          host: "127.0.0.1",
+          databasePath: "data/db.json",
+          sqlitePath: "data/db.sqlite",
+          downloadDir: "data/downloads",
+          uploadDir: "data/uploads",
+          volcengineAK: "",
+          volcengineSK: "",
+          volcengineRegion: "cn-beijing",
+          volcengineService: "ark",
+          arkAPIKey: "",
+          arkVideoModel: "ep",
+          arkBaseURL: "https://ark.cn-beijing.volces.com",
+          imageHostURL: "https://uguu.se/upload.php",
+          assetProjectName: "",
+          pollIntervalSeconds: "1",
+          pollTimeoutSeconds: "1",
+          maxPollRetryCount: "1",
+          maxConcurrentVideoTasks: "1",
+          maxConcurrentTopazTasks: "1",
+          topazEnabled: "true",
+          topazCLIPath: cliPath,
+          topazWorkDir: "data/topaz",
+          topazDefaultAIModel: "prob-4",
+          tokenPricePerThousand: "0.049085"
+        },
+        topaz: {
+          processMode: "upscale",
+          aiModel: "prob-4",
+          targetPreset: "2x",
+          codec: "h264_videotoolbox",
+          qv: 82
+        }
+      });
+
+      const calls = (await readFile(callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { cwd: string; args: string[]; inputExists: boolean });
+      const probeCall = calls.find((call) => call.args[0] === "probe");
+      const processCall = calls.find((call) => call.args[0] === "process");
+      expect(isAbsolute(probeCall?.args[1] ?? "")).toBe(true);
+      expect(isAbsolute(processCall?.args[1] ?? "")).toBe(true);
+      expect(probeCall?.inputExists).toBe(true);
+      expect(processCall?.inputExists).toBe(true);
+      expect(isAbsolute(processCall?.args[2] ?? "")).toBe(true);
+      expect(isAbsolute(processCall?.cwd ?? "")).toBe(true);
+      expect(processCall?.cwd.replace(/\\/g, "/")).toMatch(/\/data\/topaz$/);
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 });

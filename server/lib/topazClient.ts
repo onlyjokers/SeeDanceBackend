@@ -37,17 +37,19 @@ export class TopazClient {
   async process(input: TopazProcessInput): Promise<TopazProcessResult> {
     const started = Date.now();
     const cliPath = input.settings.topazCLIPath || this.config.topazCLIPath || "topaz-video";
-    const workDir = input.settings.topazWorkDir || this.config.topazWorkDir || "data/topaz";
+    const workDir = resolve(input.settings.topazWorkDir || this.config.topazWorkDir || "data/topaz");
+    const downloadDir = resolve(input.settings.downloadDir || this.config.downloadDir);
+    const sourcePath = resolve(input.sourcePath);
     await mkdir(workDir, { recursive: true });
-    await mkdir(input.settings.downloadDir || this.config.downloadDir, { recursive: true });
+    await mkdir(downloadDir, { recursive: true });
 
-    const sourceInfo = await this.probe(cliPath, input.sourcePath);
+    const sourceInfo = await this.probe(cliPath, sourcePath);
     const scale = scaleForTopazTarget(sourceInfo, input.topaz.targetPreset);
-    const extension = extname(input.sourcePath) || ".mp4";
-    const outputPath = resolve(input.settings.downloadDir || this.config.downloadDir, `${input.taskId}-topaz${extension}`);
+    const extension = extname(sourcePath) || ".mp4";
+    const outputPath = resolve(downloadDir, `${input.taskId}-topaz${extension}`);
     const processModes = topazProcessModesFor(input.topaz);
     const rawSteps: unknown[] = [];
-    let currentInputPath = input.sourcePath;
+    let currentInputPath = sourcePath;
     for (const [index, mode] of processModes.entries()) {
       const stepOutputPath = index === processModes.length - 1
         ? outputPath
