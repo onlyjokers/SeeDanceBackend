@@ -1,4 +1,4 @@
-import type { AssetType, GenerationRatio, ImageModelVersion, ImageQuality, ImageResolution, ImageSize, MediaType, ReferenceTransport, VideoMode, VideoModelVersion, VideoReferenceInput, VideoResolution } from "./lib/payloads.js";
+import type { AssetType, GenerationRatio, ImageModelVersion, ImageQuality, ImageResolution, ImageSize, MediaType, ReferenceTransport, TaskKind, VideoMode, VideoModelVersion, VideoReferenceInput, VideoResolution } from "./lib/payloads.js";
 
 export interface AssetGroup {
   id: string;
@@ -28,6 +28,7 @@ export interface Asset {
 
 export interface VideoTask {
   id: string;
+  taskKind?: TaskKind;
   mediaType?: MediaType;
   provider?: string;
   projectId?: string;
@@ -52,10 +53,37 @@ export interface VideoTask {
   imageQuality?: ImageQuality;
   imageUrls?: string[];
   imageDownloadPaths?: string[];
+  topaz?: TopazTaskMetadata;
   hiddenAt?: string;
   raw?: unknown;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TopazTaskMetadata {
+  sourceTaskId?: string;
+  sourceLocalPath?: string;
+  sourceFileName?: string;
+  sourceInfo?: {
+    width?: number;
+    height?: number;
+    duration?: string;
+    bitrate?: string;
+    videoCodec?: string;
+  };
+  processMode: "upscale" | "enhance" | "stabilize" | "interpolate";
+  processModes?: Array<"upscale" | "enhance" | "stabilize" | "interpolate">;
+  aiModel: string;
+  targetPreset: "2k" | "4k" | "8k" | "2x" | "4x" | "8x";
+  scale?: number;
+  codec: string;
+  bitrate?: string;
+  qv?: number;
+  crf?: number;
+  qualityParams?: Record<string, number | boolean | string>;
+  outputPath?: string;
+  outputSize?: number;
+  durationMs?: number;
 }
 
 export interface TokenUsage {
@@ -101,6 +129,11 @@ export interface RuntimeSettings {
   maxPollRetryCount: string;
   maxConcurrentVideoTasks: string;
   maxConcurrentImageTasks?: string;
+  topazEnabled?: string;
+  topazCLIPath?: string;
+  topazWorkDir?: string;
+  maxConcurrentTopazTasks?: string;
+  topazDefaultAIModel?: string;
   tokenPricePerThousand: string;
   imageTokenPricePerThousand?: string;
   image2APIKey?: string;

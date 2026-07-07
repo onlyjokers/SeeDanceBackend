@@ -1,6 +1,6 @@
 import type { DatabaseShape, VideoTask } from "../types.js";
-import type { MediaType } from "./payloads.js";
-import { mediaTypeOf } from "./db.js";
+import type { MediaType, TaskKind } from "./payloads.js";
+import { mediaTypeOf, taskKindOf } from "./db.js";
 import { resolveTaskTokenUsage } from "./taskTokenUsage.js";
 
 export interface LocalUsageSummary {
@@ -73,6 +73,7 @@ export interface ProjectUsageSummary {
   totalTokens: number;
   estimatedCost: number;
   mediaTypes: Record<MediaType, MediaUsageSummary>;
+  taskKinds: Record<TaskKind, number>;
   buckets: Record<UsageGranularity, UsageBucket[]>;
   bucketsByMediaType: Record<MediaType, Record<UsageGranularity, UsageBucket[]>>;
 }
@@ -116,7 +117,9 @@ export function summarizeLocalUsage(data: DatabaseShape): LocalUsageSummary {
     if (mediaType === "video" && task.downloadPath) downloadedVideos += 1;
     if (mediaType === "image" && (task.imageDownloadPaths?.length ?? 0) > 0) downloadedImages += 1;
     referenceImages += (task.references ?? []).filter((reference) => reference.assetType === "Image").length;
-    const tokenUsage = resolveTaskTokenUsage(task, data.pollLogs.filter((log) => log.taskId === task.id));
+    const tokenUsage = taskKindOf(task) === "video_upscale"
+      ? undefined
+      : resolveTaskTokenUsage(task, data.pollLogs.filter((log) => log.taskId === task.id));
     inputTokens += tokenUsage?.inputTokens ?? 0;
     outputTokens += tokenUsage?.outputTokens ?? 0;
     totalTokens += tokenUsage?.totalTokens ?? 0;
@@ -207,6 +210,11 @@ function createProjectUsage(projectId: string, projectName: string, deletedAt?: 
       video: createMediaUsage(),
       image: createMediaUsage()
     },
+    taskKinds: {
+      video_generation: 0,
+      image_generation: 0,
+      video_upscale: 0
+    },
     buckets: {
       hour: new Map(),
       day: new Map(),
@@ -232,10 +240,12 @@ function createProjectUsage(projectId: string, projectName: string, deletedAt?: 
 
 function addTaskToProjectUsage(project: MutableProjectUsage, task: VideoTask, tokenUsage: ReturnType<typeof resolveTaskTokenUsage>, rate: number) {
   const mediaType = mediaTypeOf(task);
+  const taskKind = taskKindOf(task);
   const inputTokens = tokenUsage?.inputTokens ?? 0;
   const outputTokens = tokenUsage?.outputTokens ?? 0;
   const totalTaskTokens = tokenUsage?.totalTokens ?? 0;
   project.requests += 1;
+  project.taskKinds[taskKind] += 1;
   if (task.status === "succeeded") project.succeeded += 1;
   if (task.status === "failed") project.failed += 1;
   project.inputTokens += inputTokens;

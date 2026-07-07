@@ -126,3 +126,66 @@ export type ImageTaskRequest = z.infer<typeof imageTaskRequestSchema>;
 export function parseImageTaskRequest(input: unknown): ImageTaskRequest {
   return imageTaskRequestSchema.parse(input);
 }
+
+export const topazProcessModes = ["upscale", "enhance", "stabilize", "interpolate"] as const;
+export const topazTargetPresets = ["2k", "4k", "8k", "2x", "4x", "8x"] as const;
+
+const qualityParamsSchema = z.object({
+  preblur: z.number().min(-1).max(1).optional(),
+  noise: z.number().min(-1).max(1).optional(),
+  details: z.number().min(-1).max(1).optional(),
+  halo: z.number().min(-1).max(1).optional(),
+  blur: z.number().min(-1).max(1).optional(),
+  compression: z.number().min(-1).max(1).optional(),
+  prenoise: z.number().min(0).max(0.1).optional(),
+  grain: z.number().min(0).max(1).optional(),
+  gsize: z.number().min(0).max(5).optional(),
+  blend: z.number().min(0).max(1).optional(),
+  fps: z.number().positive().optional(),
+  slowmo: z.number().min(0.1).max(16).optional(),
+  rdt: z.number().optional(),
+  smoothness: z.number().min(0).max(16).optional(),
+  ws: z.number().int().min(0).max(512).optional(),
+  csx: z.number().min(1).max(8).optional(),
+  csy: z.number().min(1).max(8).optional(),
+  dof: z.number().int().min(0).max(1111).optional(),
+  reduce: z.number().int().min(0).max(5).optional()
+}).default({});
+
+export const topazTaskRequestSchema = z.object({
+  projectId: z.string().optional(),
+  mediaType: z.literal("video").default("video"),
+  taskKind: z.literal("video_upscale"),
+  sourceTaskId: z.string().min(1).optional(),
+  sourceLocalPath: z.string().min(1).optional(),
+  processMode: z.enum(topazProcessModes).default("enhance"),
+  processModes: z.array(z.enum(topazProcessModes)).min(1).optional(),
+  aiModel: z.string().trim().min(1).default("proteus"),
+  targetPreset: z.enum(topazTargetPresets).default("2x"),
+  codec: z.string().trim().min(1).default("h264_videotoolbox"),
+  bitrate: z.string().trim().optional(),
+  qv: z.number().int().min(1).max(1024).optional(),
+  crf: z.number().int().min(0).max(51).optional(),
+  qualityParams: qualityParamsSchema
+}).superRefine((value, context) => {
+  if (!value.sourceTaskId && !value.sourceLocalPath) {
+    context.addIssue({
+      code: "custom",
+      path: ["sourceTaskId"],
+      message: "视频放大需要选择源视频"
+    });
+  }
+  if (value.sourceTaskId && value.sourceLocalPath) {
+    context.addIssue({
+      code: "custom",
+      path: ["sourceTaskId"],
+      message: "只能选择一种源视频"
+    });
+  }
+});
+
+export type TopazTaskRequest = z.infer<typeof topazTaskRequestSchema>;
+
+export function parseTopazTaskRequest(input: unknown): TopazTaskRequest {
+  return topazTaskRequestSchema.parse(input);
+}

@@ -21,6 +21,11 @@ export interface AppConfig {
   maxPollRetryCount: number;
   maxConcurrentVideoTasks: number;
   maxConcurrentImageTasks?: number;
+  topazEnabled?: boolean;
+  topazCLIPath?: string;
+  topazWorkDir?: string;
+  maxConcurrentTopazTasks?: number;
+  topazDefaultAIModel?: string;
   tokenPricePerThousand: number;
   imageTokenPricePerThousand?: number;
   image2APIKey?: string;
@@ -51,6 +56,11 @@ export function loadConfig(): AppConfig {
     maxPollRetryCount: integerEnv("MAX_POLL_RETRY_COUNT", 5),
     maxConcurrentVideoTasks: integerEnv("MAX_CONCURRENT_VIDEO_TASKS", 100),
     maxConcurrentImageTasks: integerEnv("MAX_CONCURRENT_IMAGE_TASKS", 8),
+    topazEnabled: booleanEnv("TOPAZ_ENABLED", false),
+    topazCLIPath: process.env.TOPAZ_CLI_PATH || "topaz-video",
+    topazWorkDir: process.env.TOPAZ_WORK_DIR || "data/topaz",
+    maxConcurrentTopazTasks: integerEnv("MAX_CONCURRENT_TOPAZ_TASKS", 1) || 1,
+    topazDefaultAIModel: process.env.TOPAZ_DEFAULT_AI_MODEL || "proteus",
     tokenPricePerThousand: numberEnv("TOKEN_PRICE_PER_THOUSAND", 0.049085),
     imageTokenPricePerThousand: numberEnv("IMAGE_TOKEN_PRICE_PER_THOUSAND", numberEnv("TOKEN_PRICE_PER_THOUSAND", 0.049085)),
     image2APIKey: process.env.IMAGE2_API_KEY || "",
@@ -76,6 +86,11 @@ export function publicConfig(config: AppConfig) {
     maxPollRetryCount: config.maxPollRetryCount,
     maxConcurrentVideoTasks: config.maxConcurrentVideoTasks,
     maxConcurrentImageTasks: config.maxConcurrentImageTasks ?? 8,
+    topazEnabled: config.topazEnabled ?? false,
+    topazCLIPath: config.topazCLIPath ?? "topaz-video",
+    topazWorkDir: config.topazWorkDir ?? "data/topaz",
+    maxConcurrentTopazTasks: config.maxConcurrentTopazTasks ?? 1,
+    topazDefaultAIModel: config.topazDefaultAIModel ?? "proteus",
     tokenPricePerThousand: config.tokenPricePerThousand,
     imageTokenPricePerThousand: config.imageTokenPricePerThousand ?? config.tokenPricePerThousand,
     image2APIKeyConfigured: Boolean(config.image2APIKey),
@@ -99,6 +114,12 @@ function integerEnv(name: string, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
 function sqlitePathFromJsonPath(path: string) {

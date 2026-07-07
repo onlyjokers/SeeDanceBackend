@@ -208,4 +208,48 @@ describe("usage stats", () => {
     expect(project?.mediaTypes.image.requests).toBe(1);
     expect(project?.bucketsByMediaType.image.day[0]).toMatchObject({ totalTokens: 200 });
   });
+
+  it("excludes Topaz video upscale tasks from token and cost totals", () => {
+    const data: DatabaseShape = {
+      assetGroups: [],
+      assets: [],
+      pollLogs: [],
+      runtimeSettings: { tokenPricePerThousand: "0.05" } as DatabaseShape["runtimeSettings"],
+      videoProjects: [
+        { id: "p1", name: "放大项目", createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-05-01T00:00:00.000Z" }
+      ],
+      videoTasks: [
+        {
+          id: "topaz-1",
+          taskKind: "video_upscale",
+          mediaType: "video",
+          provider: "topaz",
+          projectId: "p1",
+          prompt: "Topaz 视频放大",
+          assetIds: [],
+          status: "succeeded",
+          raw: { usage: { total_tokens: 999999 } },
+          downloadPath: "/tmp/topaz.mp4",
+          createdAt: "2026-05-18T08:00:00.000Z",
+          updatedAt: "2026-05-18T09:00:00.000Z"
+        }
+      ]
+    };
+
+    const summary = summarizeLocalUsage(data);
+    const project = summary.projectUsage.find((item) => item.projectId === "p1");
+
+    expect(summary.totals.requests).toBe(1);
+    expect(summary.totals.videos).toBe(1);
+    expect(summary.totals.totalTokens).toBe(0);
+    expect(summary.costEstimate?.estimatedCost).toBe(0);
+    expect(summary.byMediaType.video.requests).toBe(1);
+    expect(summary.byMediaType.video.totalTokens).toBe(0);
+    expect(project?.requests).toBe(1);
+    expect(project?.taskKinds.video_upscale).toBe(1);
+    expect(project?.taskKinds.video_generation).toBe(0);
+    expect(project?.taskKinds.image_generation).toBe(0);
+    expect(project?.totalTokens).toBe(0);
+    expect(project?.estimatedCost).toBe(0);
+  });
 });

@@ -1,5 +1,6 @@
 export type AssetType = "Image" | "Video" | "Audio";
 export type MediaType = "video" | "image";
+export type TaskKind = "video_generation" | "image_generation" | "video_upscale";
 export type VideoMode = "text" | "multimodal" | "frames";
 export type ReferenceTransport = "asset" | "url";
 export type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";

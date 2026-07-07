@@ -26,8 +26,13 @@ describe("video task lazy loading UI", () => {
     expect(source).not.toContain("imageResolutionSupported");
     expect(source).not.toContain("当前比例不可用");
     expect(source).toContain("gpt-image-2-pro");
-    expect(source).not.toContain('value: "4k"');
-    expect(source).not.toContain("label: \"4K\"");
+    const imageResolutionOptionsBlock = source.match(/const imageResolutionOptions[\s\S]*?\n\];/)?.[0] ?? "";
+    expect(imageResolutionOptionsBlock).toContain('value: "1k"');
+    expect(imageResolutionOptionsBlock).toContain('value: "2k"');
+    expect(imageResolutionOptionsBlock).not.toContain('value: "4k"');
+    expect(imageResolutionOptionsBlock).not.toContain("label: \"4K\"");
+    expect(source).toContain("const topazTargetOptions");
+    expect(source).toContain('value: "4k", label: "4K"');
   });
 
   it("persists executor composer settings across page refreshes", () => {
@@ -41,5 +46,25 @@ describe("video task lazy loading UI", () => {
   it("does not preload videos while rendering long task lists", () => {
     expect(source).toContain('preload="none"');
     expect(source).not.toContain('preload="metadata"');
+  });
+
+  it("keeps Topaz upscale source selection aligned with task actions and upload slots", () => {
+    expect(source).toContain("TopazUploadSlot");
+    expect(source).toContain("upload-slot topaz-video-slot");
+    expect(source).toContain("onUpscale");
+    expect(source).toContain('kind === "topazMode"');
+    expect(source).toContain('toggleMenu("topazMode"');
+    expect(source).toContain("topazModeLabel(topazProcessModes)");
+    expect(source).toContain('toggleMenu("topazModel"');
+    expect(source).toContain("topazAIModelLabel(topazAIModel)");
+    expect(source).toContain('toggleMenu("topazTarget"');
+    expect(source).toContain("topazTargetLabel(topazTargetPreset)");
+    expect(source).toContain('toggleMenu("topazCodec"');
+    expect(source).toContain("topazCodecLabel(topazCodec)");
+    expect(source).not.toContain('className="topaz-settings"');
+    expect(source).not.toContain('className="topaz-quality-row"');
+    expect(source).not.toContain("topaz-note");
+    expect(source).not.toContain("topaz-mode-toggle");
+    expect(source).not.toContain("从已生成视频选择");
   });
 });

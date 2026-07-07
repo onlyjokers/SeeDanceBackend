@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { normalizeImage2APIURL, normalizeImage2Model, type AppConfig } from "./config.js";
 import { nonBlankRuntimeSettings, runtimeSettingsFromConfig, trimRuntimeSettings } from "./runtimeSettings.js";
 import type { Asset, AssetGroup, DatabaseShape, PollLog, RuntimeSettings, StorageStats, VideoProject, VideoTask } from "../types.js";
-import type { ImageTaskRequest, VideoTaskRequest } from "./requestSchemas.js";
+import type { ImageTaskRequest, TopazTaskRequest, VideoTaskRequest } from "./requestSchemas.js";
 import { imageRatios, imageResolutions, imageSizeOptionForSize, resolveImageSize, type ImageRatio, type ImageResolution, type MediaType } from "./payloads.js";
 
 const defaultData: DatabaseShape = {
@@ -36,6 +36,11 @@ export const defaultRuntimeSettings: RuntimeSettings = {
   maxPollRetryCount: "5",
   maxConcurrentVideoTasks: "100",
   maxConcurrentImageTasks: "8",
+  topazEnabled: "false",
+  topazCLIPath: "topaz-video",
+  topazWorkDir: "data/topaz",
+  maxConcurrentTopazTasks: "1",
+  topazDefaultAIModel: "proteus",
   tokenPricePerThousand: "0.049085",
   imageTokenPricePerThousand: "0.049085",
   image2APIKey: "",
@@ -259,6 +264,7 @@ export async function createImageTask(db: AppDB, input: ImageTaskRequest): Promi
     : await ensureDefaultVideoProject(db);
   const task: VideoTask = {
     id: crypto.randomUUID(),
+    taskKind: "image_generation",
     mediaType: "image",
     provider: "image2",
     projectId: project.id,
@@ -272,6 +278,42 @@ export async function createImageTask(db: AppDB, input: ImageTaskRequest): Promi
     references: input.references,
     imageModel: input.imageModel || db.data.runtimeSettings?.image2Model || defaultRuntimeSettings.image2Model,
     status: "queued",
+    createdAt: now,
+    updatedAt: now
+  };
+  await db.update((data) => {
+    data.videoTasks.unshift(task);
+  });
+  return task;
+}
+
+export async function createTopazTask(db: AppDB, input: TopazTaskRequest): Promise<VideoTask> {
+  const now = new Date().toISOString();
+  const project = input.projectId
+    ? db.data.videoProjects.find((item) => item.id === input.projectId && !item.deletedAt) ?? await ensureDefaultVideoProject(db)
+    : await ensureDefaultVideoProject(db);
+  const task: VideoTask = {
+    id: crypto.randomUUID(),
+    taskKind: "video_upscale",
+    mediaType: "video",
+    provider: "topaz",
+    projectId: project.id,
+    prompt: "Topaz 视频放大",
+    assetIds: [],
+    status: "queued",
+    topaz: {
+      sourceTaskId: input.sourceTaskId,
+      sourceLocalPath: input.sourceLocalPath,
+      processMode: input.processMode,
+      processModes: input.processModes,
+      aiModel: input.aiModel,
+      targetPreset: input.targetPreset,
+      codec: input.codec,
+      bitrate: input.bitrate,
+      qv: input.qv,
+      crf: input.crf,
+      qualityParams: input.qualityParams
+    },
     createdAt: now,
     updatedAt: now
   };
@@ -307,6 +349,7 @@ export function getExecutorVideoProjects(data: DatabaseShape) {
 export interface VideoTaskPageInput {
   projectId?: string;
   mediaType?: "all" | MediaType;
+  taskKind?: "all" | "video_generation" | "image_generation" | "video_upscale";
   limit?: number;
   before?: string;
   status?: "all" | VideoTask["status"] | "hidden";
@@ -327,6 +370,7 @@ export function getExecutorVideoTaskPage(data: DatabaseShape, input: VideoTaskPa
     .filter((task) => !task.hiddenAt && (!task.projectId || activeProjectIds.has(task.projectId)))
     .filter((task) => !projectId || task.projectId === projectId)
     .filter((task) => !input.mediaType || input.mediaType === "all" || mediaTypeOf(task) === input.mediaType)
+    .filter((task) => !input.taskKind || input.taskKind === "all" || taskKindOf(task) === input.taskKind)
     .sort(compareTasksNewest);
   return paginateTasks(tasks, input.limit, input.before);
 }
@@ -338,6 +382,7 @@ export function getManagerVideoTaskPage(data: DatabaseShape, input: VideoTaskPag
     .filter((task) => {
       if (input.projectId && task.projectId !== input.projectId) return false;
       if (input.mediaType && input.mediaType !== "all" && mediaTypeOf(task) !== input.mediaType) return false;
+      if (input.taskKind && input.taskKind !== "all" && taskKindOf(task) !== input.taskKind) return false;
       if (input.status === "hidden" && !task.hiddenAt) return false;
       if (input.status && input.status !== "all" && input.status !== "hidden" && task.status !== input.status) return false;
       if (!normalizedQuery) return true;
@@ -514,10 +559,12 @@ function normalizeData(data: Partial<DatabaseShape>): DatabaseShape {
 
 function normalizeTask(task: VideoTask): VideoTask {
   const normalized: VideoTask = {
+    taskKind: "video_generation",
     mediaType: "video",
     ...task
   };
   if (mediaTypeOf(normalized) === "image") {
+    normalized.taskKind ??= "image_generation";
     const legacySize = imageSizeOptionForSize(normalized.imageSize);
     const existingResolution = imageResolutions.includes(normalized.imageResolution as ImageResolution)
       ? normalized.imageResolution as ImageResolution
@@ -529,6 +576,10 @@ function normalizeTask(task: VideoTask): VideoTask {
       normalized.imageSize ??= resolveImageSize(normalized.ratio, normalized.imageResolution);
     }
   }
+  if (normalized.provider === "topaz" || normalized.taskKind === "video_upscale") {
+    normalized.taskKind = "video_upscale";
+    normalized.mediaType = "video";
+  }
   return normalized;
 }
 
@@ -538,6 +589,12 @@ function isImageRatio(value: unknown): value is ImageRatio {
 
 export function mediaTypeOf(task: Pick<VideoTask, "mediaType">): MediaType {
   return task.mediaType === "image" ? "image" : "video";
+}
+
+export function taskKindOf(task: Pick<VideoTask, "taskKind" | "mediaType" | "provider">) {
+  if (task.taskKind) return task.taskKind;
+  if (task.provider === "topaz") return "video_upscale";
+  return task.mediaType === "image" ? "image_generation" : "video_generation";
 }
 
 async function fileSize(path: string) {

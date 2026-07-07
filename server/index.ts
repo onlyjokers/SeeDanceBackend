@@ -3,19 +3,21 @@ import { mkdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { z } from "zod";
 import { loadConfig, publicConfig } from "./lib/config.js";
-import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createImageTask, createVideoTask, createVideoProject, ensureDefaultVideoProject, getExecutorVideoTaskPage, getManagerVideoTaskPage, getRuntimeSettings, getStorageStats, hardDeleteVideoTaskRecord, hideVideoTaskRecord, mediaTypeOf, renameVideoProject, restoreVideoProject, softDeleteVideoProject, updateRuntimeSettings } from "./lib/db.js";
+import { openDB, upsertAssetGroup, upsertAsset, deleteAsset, createImageTask, createTopazTask, createVideoTask, createVideoProject, ensureDefaultVideoProject, getExecutorVideoTaskPage, getManagerVideoTaskPage, getRuntimeSettings, getStorageStats, hardDeleteVideoTaskRecord, hideVideoTaskRecord, mediaTypeOf, renameVideoProject, restoreVideoProject, softDeleteVideoProject, updateRuntimeSettings } from "./lib/db.js";
 import { AssetsClient } from "./lib/assetsClient.js";
 import { VideoClient } from "./lib/videoClient.js";
 import { ImageClient } from "./lib/imageClient.js";
 import { SerialTaskRunner } from "./lib/taskRunner.js";
 import { ImageTaskRunner } from "./lib/imageTaskRunner.js";
+import { TopazClient, assertControlledTopazSourcePath, checkTopazCLIAvailable } from "./lib/topazClient.js";
+import { TopazTaskRunner } from "./lib/topazTaskRunner.js";
 import { validatePublicAssetUrl, type AssetType, type VideoReferenceInput } from "./lib/payloads.js";
-import { parseImageTaskRequest, parseVideoTaskRequest } from "./lib/requestSchemas.js";
+import { parseImageTaskRequest, parseTopazTaskRequest, parseVideoTaskRequest } from "./lib/requestSchemas.js";
 import { getDownloadPathForTask, openDownloadFolder } from "./lib/downloadFolder.js";
 import { uploadImageToTemporaryHost } from "./lib/uploadProvider.js";
 import { mountStaticClient } from "./lib/staticRouter.js";
 import { summarizeLocalUsage } from "./lib/usageStats.js";
-import { fileFromLocalUpload, resolveLocalUploadPath, saveUploadedImageLocally } from "./lib/localUploadStore.js";
+import { fileFromLocalUpload, resolveLocalUploadPath, saveUploadedImageLocally, saveUploadedVideoLocally } from "./lib/localUploadStore.js";
 import { buildTaskDebugExport } from "./lib/taskDebugExport.js";
 import { errorMessage, retryOperation } from "./lib/retry.js";
 import type { TaskRunContext } from "./lib/taskRunner.js";
@@ -26,12 +28,15 @@ const db = await openDB(config.databasePath, config.sqlitePath);
 await ensureDefaultVideoProject(db);
 await mkdir(config.downloadDir, { recursive: true });
 await mkdir(config.uploadDir, { recursive: true });
+await mkdir(config.topazWorkDir ?? "data/topaz", { recursive: true });
 
 const assetsClient = new AssetsClient(config, () => getRuntimeSettings(db, config));
 const videoClient = new VideoClient(config, () => getRuntimeSettings(db, config));
 const imageClient = new ImageClient(config, () => getRuntimeSettings(db, config));
+const topazClient = new TopazClient(config);
 const runner = new SerialTaskRunner(db, videoClient, config, () => getRuntimeSettings(db, config));
 const imageRunner = new ImageTaskRunner(db, imageClient, config, () => getRuntimeSettings(db, config));
+const topazRunner = new TopazTaskRunner(db, topazClient, config, () => getRuntimeSettings(db, config));
 const app = express();
 const managerToken = "sts-manager-session";
 
@@ -48,6 +53,7 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/config", asyncHandler(async (_req, res) => {
   const settings = await getRuntimeSettings(db, config);
+  const topazCLI = await checkTopazCLIAvailable(settings.topazCLIPath ?? "topaz-video");
   res.json({
     ...publicConfig(config),
     arkAPIKeyConfigured: Boolean(settings.arkAPIKey),
@@ -57,6 +63,13 @@ app.get("/api/config", asyncHandler(async (_req, res) => {
     image2APIKeyConfigured: Boolean(settings.image2APIKey),
     image2APIURL: settings.image2APIURL,
     image2Model: settings.image2Model,
+    topazEnabled: settings.topazEnabled === "true",
+    topazCLIPath: settings.topazCLIPath,
+    topazWorkDir: settings.topazWorkDir,
+    maxConcurrentTopazTasks: settings.maxConcurrentTopazTasks,
+    topazDefaultAIModel: settings.topazDefaultAIModel,
+    topazCLIAvailable: topazCLI.available,
+    topazCLIStatus: topazCLI.status,
     assetsCredentialsConfigured: Boolean(settings.volcengineAK && settings.volcengineSK)
   });
 }));
@@ -111,6 +124,7 @@ app.post("/api/manager/login", asyncHandler(async (req, res) => {
 
 app.get("/api/v1/config", asyncHandler(async (_req, res) => {
   const settings = await getRuntimeSettings(db, config);
+  const topazCLI = await checkTopazCLIAvailable(settings.topazCLIPath ?? "topaz-video");
   res.json({
     ...publicConfig(config),
     arkAPIKeyConfigured: Boolean(settings.arkAPIKey),
@@ -120,6 +134,13 @@ app.get("/api/v1/config", asyncHandler(async (_req, res) => {
     image2APIKeyConfigured: Boolean(settings.image2APIKey),
     image2APIURL: settings.image2APIURL,
     image2Model: settings.image2Model,
+    topazEnabled: settings.topazEnabled === "true",
+    topazCLIPath: settings.topazCLIPath,
+    topazWorkDir: settings.topazWorkDir,
+    maxConcurrentTopazTasks: settings.maxConcurrentTopazTasks,
+    topazDefaultAIModel: settings.topazDefaultAIModel,
+    topazCLIAvailable: topazCLI.available,
+    topazCLIStatus: topazCLI.status,
     assetsCredentialsConfigured: Boolean(settings.volcengineAK && settings.volcengineSK)
   });
 }));
@@ -215,6 +236,14 @@ app.post("/api/v1/uploads/images", asyncHandler(async (req, res) => {
     maxRetries: retryCountFromSettings(settings)
   });
   res.json({ ...uploaded, localPath: local.path, localUrl: local.url });
+}));
+
+app.post("/api/v1/uploads/videos", asyncHandler(async (req, res) => {
+  const file = await fileFromMultipartRequest(req);
+  if (!file.type.startsWith("video/")) return res.status(400).json({ error: "只支持上传视频文件。" });
+  const settings = await getRuntimeSettings(db, config);
+  const local = await saveUploadedVideoLocally(file, settings.uploadDir || config.uploadDir);
+  res.json({ path: local.path, localPath: local.path, url: local.url, localUrl: local.url });
 }));
 
 app.get("/api/v1/uploads/local/:name", asyncHandler(async (req, res) => {
@@ -356,6 +385,14 @@ app.post("/api/uploads/image", asyncHandler(async (req, res) => {
   res.json({ ...uploaded, localPath: local.path, localUrl: local.url });
 }));
 
+app.post("/api/uploads/video", asyncHandler(async (req, res) => {
+  const file = await fileFromMultipartRequest(req);
+  if (!file.type.startsWith("video/")) return res.status(400).json({ error: "只支持上传视频文件。" });
+  const settings = await getRuntimeSettings(db, config);
+  const local = await saveUploadedVideoLocally(file, settings.uploadDir || config.uploadDir);
+  res.json({ path: local.path, localPath: local.path, url: local.url, localUrl: local.url });
+}));
+
 app.get("/api/uploads/local/:name", asyncHandler(async (req, res) => {
   const name = basename(routeParam(req.params.name));
   const settings = await getRuntimeSettings(db, config);
@@ -422,46 +459,7 @@ app.post("/api/video-tasks", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/generation-tasks", asyncHandler(async (req, res) => {
-  if (req.body?.mediaType === "image") {
-    const input = parseImageTaskRequest(req.body);
-    await getRuntimeSettings(db, config);
-    const task = await createImageTask(db, input);
-    imageRunner.enqueue(task.id, async (context) => {
-      const settings = await getRuntimeSettings(db, config);
-      const refreshed = await refreshTemporaryReferences(input.references, settings, context);
-      const references = await prepareImageReferences(refreshed);
-      return imageClient.generate({
-        prompt: input.prompt,
-        ratio: input.ratio,
-        imageResolution: input.imageResolution,
-        imageQuality: input.imageQuality,
-        size: input.size,
-        imageModel: input.imageModel,
-        references
-      });
-    });
-    return res.json(task);
-  }
-
-  const input = parseVideoTaskRequest({ ...req.body, mediaType: "video" });
-  const task = await createVideoTask(db, input, input.references.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
-  runner.enqueue(task.id, async (context) => {
-    const settings = await getRuntimeSettings(db, config);
-    const refreshedInputReferences = await refreshTemporaryReferences(input.references, settings, context);
-    const references = input.referenceTransport === "asset"
-      ? await prepareAssetReferences(refreshedInputReferences, settings, context)
-      : refreshedInputReferences;
-    return videoClient.createTask({
-      modelVersion: input.modelVersion,
-      prompt: input.prompt,
-      mode: input.mode,
-      ratio: input.ratio,
-      duration: input.duration,
-      resolution: input.resolution,
-      references
-    });
-  });
-  return res.json(task);
+  return submitGenerationTask(req, res);
 }));
 
 app.get("/api/executor/tasks", asyncHandler(async (req, res) => {
@@ -612,6 +610,11 @@ const runtimeSettingsSchema = z.object({
   maxPollRetryCount: z.string().trim().min(1),
   maxConcurrentVideoTasks: z.string().trim().min(1),
   maxConcurrentImageTasks: z.string().trim().min(1),
+  topazEnabled: z.string().trim().min(1),
+  topazCLIPath: z.string().trim().min(1),
+  topazWorkDir: z.string().trim().min(1),
+  maxConcurrentTopazTasks: z.string().trim().min(1),
+  topazDefaultAIModel: z.string().trim().min(1),
   tokenPricePerThousand: z.string().trim().min(1),
   imageTokenPricePerThousand: z.string().trim().min(1),
   image2APIKey: z.string().trim(),
@@ -623,6 +626,7 @@ const positiveLimitSchema = z.coerce.number().int().min(1).max(100).optional();
 const taskPageQuerySchema = z.object({
   projectId: z.string().optional(),
   mediaType: z.enum(["all", "video", "image"]).optional(),
+  taskKind: z.enum(["all", "video_generation", "image_generation", "video_upscale"]).optional(),
   limit: positiveLimitSchema,
   before: z.string().optional()
 });
@@ -637,6 +641,29 @@ function isManagerRequest(req: express.Request) {
 }
 
 async function submitGenerationTask(req: express.Request, res: express.Response) {
+  if (req.body?.taskKind === "video_upscale") {
+    const input = parseTopazTaskRequest(req.body);
+    const settings = await getRuntimeSettings(db, config);
+    if (settings.topazEnabled !== "true") return res.status(400).json({ error: "Topaz 视频放大未启用。" });
+    if (input.sourceLocalPath) {
+      input.sourceLocalPath = assertControlledTopazSourcePath(input.sourceLocalPath, {
+        uploadDir: settings.uploadDir || config.uploadDir,
+        downloadDir: settings.downloadDir || config.downloadDir
+      });
+    }
+    if (input.sourceTaskId) {
+      const source = db.data.videoTasks.find((task) => task.id === input.sourceTaskId);
+      if (!source?.downloadPath) return res.status(400).json({ error: "选择的源视频还没有本地下载文件。" });
+      assertControlledTopazSourcePath(source.downloadPath, {
+        uploadDir: settings.uploadDir || config.uploadDir,
+        downloadDir: settings.downloadDir || config.downloadDir
+      });
+    }
+    const task = await createTopazTask(db, input);
+    topazRunner.enqueue(task.id);
+    return res.json(task);
+  }
+
   if (req.body?.mediaType === "image") {
     const input = parseImageTaskRequest(req.body);
     await getRuntimeSettings(db, config);

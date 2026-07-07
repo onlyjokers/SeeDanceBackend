@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { readJsonOrThrow } from "./http";
+import { normalizeAppState } from "./appState";
 import { insertReferenceToken, labelForReferenceIndex } from "./promptReferences";
 import { resolveUsageCostEstimate, type UsageCostEstimate } from "./managerUsage";
 import {
@@ -36,6 +37,8 @@ import "./styles.css";
 
 type AssetType = "Image" | "Video" | "Audio";
 type MediaType = "video" | "image";
+type TaskKind = "video_generation" | "image_generation" | "video_upscale";
+type ComposerKind = TaskKind;
 type VideoMode = "multimodal" | "frames";
 type ReferenceTransport = "asset" | "url";
 type VideoModelVersion = "doubao-seedance-2-0-fast-260128" | "doubao-seedance-2-0-260128";
@@ -48,10 +51,13 @@ type ImageResolution = "1k" | "2k";
 type ImageQuality = "auto" | "low" | "medium" | "high";
 type ImageSize = `${number}x${number}`;
 type ReferenceRole = "reference" | "first_frame" | "last_frame";
-type MenuKind = "media" | "mode" | "model" | "ratio" | "duration" | "resolution" | "quality";
+type TopazProcessMode = "upscale" | "enhance" | "stabilize" | "interpolate";
+type TopazTargetPreset = "2k" | "4k" | "8k" | "2x" | "4x" | "8x";
+type MenuKind = "media" | "mode" | "model" | "ratio" | "duration" | "resolution" | "quality" | "topazMode" | "topazModel" | "topazTarget" | "topazCodec" | "topazQuality";
 type TopFilterKind = "time" | "media" | "mode" | "status";
 type TimeFilter = "all" | "today" | "week";
 type MediaFilter = "all" | MediaType;
+type TaskKindFilter = "all" | TaskKind;
 type ModeFilter = "all" | VideoMode;
 type StatusFilter = "all" | VideoTask["status"];
 type UsageGranularity = "hour" | "day" | "week" | "month";
@@ -82,6 +88,13 @@ interface PublicConfig {
   image2APIKeyConfigured: boolean;
   image2APIURL: string;
   image2Model: string;
+  topazEnabled: boolean;
+  topazCLIPath: string;
+  topazWorkDir: string;
+  maxConcurrentTopazTasks: string;
+  topazDefaultAIModel: string;
+  topazCLIAvailable: boolean;
+  topazCLIStatus: string;
   uploadDir: string;
   sqlitePath: string;
 }
@@ -107,6 +120,11 @@ interface RuntimeSettings {
   maxPollRetryCount: string;
   maxConcurrentVideoTasks: string;
   maxConcurrentImageTasks: string;
+  topazEnabled: string;
+  topazCLIPath: string;
+  topazWorkDir: string;
+  maxConcurrentTopazTasks: string;
+  topazDefaultAIModel: string;
   tokenPricePerThousand: string;
   imageTokenPricePerThousand: string;
   image2APIKey: string;
@@ -146,6 +164,7 @@ interface VideoReference {
 
 interface VideoTask {
   id: string;
+  taskKind?: TaskKind;
   mediaType?: MediaType;
   provider?: string;
   projectId?: string;
@@ -170,10 +189,31 @@ interface VideoTask {
   imageModel?: string;
   imageUrls?: string[];
   imageDownloadPaths?: string[];
+  topaz?: TopazTaskMetadata;
   hiddenAt?: string;
   raw?: unknown;
   createdAt: string;
   updatedAt: string;
+}
+
+interface TopazTaskMetadata {
+  sourceTaskId?: string;
+  sourceLocalPath?: string;
+  sourceFileName?: string;
+  sourceInfo?: { width?: number; height?: number; duration?: string; bitrate?: string; videoCodec?: string };
+  processMode: TopazProcessMode;
+  processModes?: TopazProcessMode[];
+  aiModel: string;
+  targetPreset: TopazTargetPreset;
+  scale?: number;
+  codec: string;
+  bitrate?: string;
+  qv?: number;
+  crf?: number;
+  qualityParams?: Record<string, number | boolean | string>;
+  outputPath?: string;
+  outputSize?: number;
+  durationMs?: number;
 }
 
 interface TokenUsage {
@@ -266,6 +306,7 @@ interface ProjectUsageSummary {
   totalTokens: number;
   estimatedCost: number;
   mediaTypes?: Record<MediaType, MediaUsageSummary>;
+  taskKinds?: Record<TaskKind, number>;
   buckets: Record<UsageGranularity, UsageBucket[]>;
   bucketsByMediaType?: Record<MediaType, Record<UsageGranularity, UsageBucket[]>>;
 }
@@ -344,6 +385,7 @@ function managerTasksUrl(input: {
   before?: string;
   query?: string;
   mediaType?: MediaFilter;
+  taskKind?: TaskKindFilter;
   status?: "all" | VideoTask["status"] | "hidden";
   sort?: "newest" | "oldest" | "status" | "project";
 }) {
@@ -351,6 +393,7 @@ function managerTasksUrl(input: {
   if (input.before) params.set("before", input.before);
   if (input.query?.trim()) params.set("query", input.query.trim());
   if (input.mediaType && input.mediaType !== "all") params.set("mediaType", input.mediaType);
+  if (input.taskKind && input.taskKind !== "all") params.set("taskKind", input.taskKind);
   if (input.status && input.status !== "all") params.set("status", input.status);
   if (input.sort) params.set("sort", input.sort);
   return `/api/manager/generation-tasks?${params.toString()}`;
@@ -366,6 +409,30 @@ const imageModelOptions: Array<{ value: ImageModelVersion; label: string; short:
   { value: "gpt-image-2-pro", label: "Image2 Pro", short: "Pro" }
 ];
 const defaultImageModel: ImageModelVersion = "gpt-image-2";
+const topazAIModelOptions = [
+  { value: "proteus", label: "Proteus", short: "Proteus" },
+  { value: "iris-2", label: "Iris", short: "Iris" },
+  { value: "artemis", label: "Artemis", short: "Artemis" },
+  { value: "nyx", label: "Nyx", short: "Nyx" },
+  { value: "theia", label: "Theia", short: "Theia" },
+  { value: "gfx", label: "GFX", short: "GFX" },
+  { value: "rhea", label: "Rhea", short: "Rhea" }
+];
+const topazProcessOptions: Array<{ value: TopazProcessMode; label: string }> = [
+  { value: "upscale", label: "放大" },
+  { value: "enhance", label: "增强" },
+  { value: "stabilize", label: "稳定" },
+  { value: "interpolate", label: "补帧" }
+];
+const topazTargetOptions: Array<{ value: TopazTargetPreset; label: string }> = [
+  { value: "2k", label: "2K" },
+  { value: "4k", label: "4K" },
+  { value: "8k", label: "8K" },
+  { value: "2x", label: "2x" },
+  { value: "4x", label: "4x" },
+  { value: "8x", label: "8x" }
+];
+const topazCodecOptions = ["h264_videotoolbox", "hevc_videotoolbox", "prores_videotoolbox", "libx264", "libx265"];
 
 const ratioOptions: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 const imageRatioOptions: ImageRatio[] = ["2:1", "16:9", "3:2", "1:1", "2:3", "9:16"];
@@ -418,9 +485,18 @@ const mediaLabels: Record<MediaType, string> = {
   image: "图片生成"
 };
 
+const composerKindLabels: Record<ComposerKind, string> = {
+  video_generation: "视频生成",
+  image_generation: "图片生成",
+  video_upscale: "视频放大"
+};
+
+const taskKindLabels: Record<TaskKind, string> = composerKindLabels;
+
 const EXECUTOR_COMPOSER_STORAGE_KEY = "seendance.executor.composer.v1";
 
 interface PersistedComposerState {
+  composerKind?: ComposerKind;
   mediaType?: MediaType;
   mode?: VideoMode;
   referenceTransport?: ReferenceTransport;
@@ -431,17 +507,27 @@ interface PersistedComposerState {
   resolution?: VideoResolution;
   imageResolution?: ImageResolution;
   imageQuality?: ImageQuality;
+  topazProcessMode?: TopazProcessMode;
+  topazProcessModes?: TopazProcessMode[];
+  topazAIModel?: string;
+  topazTargetPreset?: TopazTargetPreset;
+  topazCodec?: string;
+  topazBitrate?: string;
+  topazQv?: number;
   prompt?: string;
   slots?: ReferenceSlot[];
 }
 
 function App() {
   const persistedComposer = useMemo(() => loadPersistedComposerState(), []);
-  const initialMediaType = normalizeMediaType(persistedComposer?.mediaType);
+  const initialComposerKind = normalizeComposerKind(persistedComposer?.composerKind, persistedComposer?.mediaType);
+  const initialMediaType = initialComposerKind === "image_generation" ? "image" : "video";
   const initialMode = initialMediaType === "image" ? "multimodal" : normalizeMode(persistedComposer?.mode);
   const initialRatio = initialMediaType === "image" ? normalizeImageRatio(persistedComposer?.ratio) : normalizeVideoRatio(persistedComposer?.ratio);
+  const initialTopazProcessModes = normalizeTopazProcessModes(persistedComposer?.topazProcessModes, persistedComposer?.topazProcessMode);
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
+  const [composerKind, setComposerKind] = useState<ComposerKind>(initialComposerKind);
   const [mediaType, setMediaType] = useState<MediaType>(initialMediaType);
   const [mode, setMode] = useState<VideoMode>(initialMode);
   const [referenceTransport, setReferenceTransport] = useState<ReferenceTransport>(normalizeReferenceTransport(persistedComposer?.referenceTransport));
@@ -452,6 +538,16 @@ function App() {
   const [resolution, setResolution] = useState<VideoResolution>(normalizeResolution(persistedComposer?.resolution, normalizeModelVersion(persistedComposer?.modelVersion)));
   const [imageResolution, setImageResolution] = useState<ImageResolution>(normalizeImageResolution(persistedComposer?.imageResolution, persistedComposer?.ratio));
   const [imageQuality, setImageQuality] = useState<ImageQuality>(normalizeImageQuality(persistedComposer?.imageQuality));
+  const [topazSourceTaskId, setTopazSourceTaskId] = useState("");
+  const [topazSourceLocalPath, setTopazSourceLocalPath] = useState("");
+  const [topazSourceName, setTopazSourceName] = useState("");
+  const [topazProcessMode, setTopazProcessMode] = useState<TopazProcessMode>(initialTopazProcessModes[0] ?? "enhance");
+  const [topazProcessModes, setTopazProcessModes] = useState<TopazProcessMode[]>(initialTopazProcessModes);
+  const [topazAIModel, setTopazAIModel] = useState(normalizeTopazAIModel(persistedComposer?.topazAIModel));
+  const [topazTargetPreset, setTopazTargetPreset] = useState<TopazTargetPreset>(normalizeTopazTargetPreset(persistedComposer?.topazTargetPreset));
+  const [topazCodec, setTopazCodec] = useState(persistedComposer?.topazCodec || "h264_videotoolbox");
+  const [topazBitrate, setTopazBitrate] = useState(persistedComposer?.topazBitrate || "");
+  const [topazQv, setTopazQv] = useState(normalizeTopazQv(persistedComposer?.topazQv));
   const [prompt, setPrompt] = useState(persistedComposer?.prompt ?? "");
   const [slots, setSlots] = useState<ReferenceSlot[]>(() => restorePersistedSlots(persistedComposer, initialMode));
   const [busy, setBusy] = useState("");
@@ -495,7 +591,7 @@ function App() {
       ]);
       if (!configResponse.ok || !stateResponse.ok || !tasksResponse.ok) return;
       setConfig(await configResponse.json());
-      setState(await stateResponse.json());
+      setState(normalizeAppState(await stateResponse.json()) as AppState);
       const taskPage = await tasksResponse.json() as VideoTaskPage;
       setExecutorTasks((current) => mergeTasksById(current, taskPage.items));
       setExecutorCursor((cursor) => cursor ?? taskPage.nextCursor);
@@ -534,6 +630,7 @@ function App() {
 
   useEffect(() => {
     savePersistedComposerState({
+      composerKind,
       mediaType,
       mode,
       referenceTransport,
@@ -544,10 +641,17 @@ function App() {
       resolution,
       imageResolution,
       imageQuality,
+      topazProcessMode,
+      topazProcessModes,
+      topazAIModel,
+      topazTargetPreset,
+      topazCodec,
+      topazBitrate,
+      topazQv,
       prompt,
       slots
     });
-  }, [duration, imageModel, imageQuality, imageResolution, mediaType, mode, modelVersion, prompt, ratio, referenceTransport, resolution, slots]);
+  }, [composerKind, duration, imageModel, imageQuality, imageResolution, mediaType, mode, modelVersion, prompt, ratio, referenceTransport, resolution, slots, topazAIModel, topazBitrate, topazCodec, topazProcessMode, topazProcessModes, topazQv, topazTargetPreset]);
 
   useEffect(() => {
     if (view !== "generate") return;
@@ -586,8 +690,16 @@ function App() {
     setOpenMenu(null);
   }
 
-  function switchMedia(nextMediaType: MediaType) {
+  function switchComposerKind(nextKind: ComposerKind) {
+    setComposerKind(nextKind);
+    const nextMediaType: MediaType = nextKind === "image_generation" ? "image" : "video";
     setMediaType(nextMediaType);
+    if (nextKind === "video_upscale") {
+      setMode("multimodal");
+      setSlots([]);
+      setOpenMenu(null);
+      return;
+    }
     if (nextMediaType === "image") {
       setMode("multimodal");
       setSlots(initialSlots("multimodal"));
@@ -633,15 +745,16 @@ function App() {
   async function submitGenerationTask(overrides?: Partial<ComposerPayload>) {
     const payload = buildComposerPayload(overrides);
     const nextMediaType = payload.mediaType ?? "video";
+    const nextTaskKind = payload.taskKind ?? (nextMediaType === "image" ? "image_generation" : "video_generation");
     setBusy("generation");
     setToast("");
     try {
-      const response = await fetch(nextMediaType === "image" ? "/api/generation-tasks" : "/api/video-tasks", {
+      const response = await fetch(nextMediaType === "image" || nextTaskKind === "video_upscale" ? "/api/generation-tasks" : "/api/video-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const result = await readJsonOrThrow<VideoTask>(response, nextMediaType === "image" ? "提交图片任务失败" : "提交视频任务失败");
+      const result = await readJsonOrThrow<VideoTask>(response, nextTaskKind === "video_upscale" ? "提交视频放大任务失败" : nextMediaType === "image" ? "提交图片任务失败" : "提交视频任务失败");
       setSelectedTaskId(result.id);
       setExecutorTasks((current) => mergeTasksById([result], current));
       await refresh();
@@ -655,7 +768,27 @@ function App() {
 
   function buildComposerPayload(overrides: Partial<ComposerPayload> = {}): ComposerPayload {
     const nextMediaType = overrides.mediaType ?? mediaType;
+    const nextTaskKind = overrides.taskKind ?? composerKind;
+    if (nextTaskKind === "video_upscale") {
+      return {
+        taskKind: "video_upscale",
+        mediaType: "video",
+        projectId: activeProjectId || undefined,
+        sourceTaskId: topazSourceTaskId || undefined,
+        sourceLocalPath: topazSourceTaskId ? undefined : topazSourceLocalPath || undefined,
+        processMode: topazProcessModes[0] ?? topazProcessMode,
+        processModes: topazProcessModes,
+        aiModel: topazAIModel,
+        targetPreset: topazTargetPreset,
+        codec: topazCodec,
+        bitrate: topazBitrate.trim() || undefined,
+        qv: topazQv,
+        crf: undefined,
+        qualityParams: {}
+      } as ComposerPayload;
+    }
     return {
+      taskKind: nextMediaType === "image" ? "image_generation" : "video_generation",
       mediaType: nextMediaType,
       projectId: activeProjectId || undefined,
       mode,
@@ -684,7 +817,26 @@ function App() {
   }
 
   function restoreTask(task: VideoTask) {
+    if (taskKindOf(task) === "video_upscale") {
+      setComposerKind("video_upscale");
+      setMediaType("video");
+      setTopazSourceTaskId(task.topaz?.sourceTaskId ?? "");
+      setTopazSourceLocalPath(task.topaz?.sourceTaskId ? "" : task.topaz?.sourceLocalPath ?? "");
+      setTopazSourceName(task.topaz?.sourceFileName ?? task.topaz?.sourceLocalPath?.split("/").pop() ?? "");
+      const nextModes = normalizeTopazProcessModes(task.topaz?.processModes, task.topaz?.processMode);
+      setTopazProcessModes(nextModes);
+      setTopazProcessMode(nextModes[0] ?? "enhance");
+      setTopazAIModel(task.topaz?.aiModel ?? "proteus");
+      setTopazTargetPreset(task.topaz?.targetPreset ?? "2x");
+      setTopazCodec(task.topaz?.codec ?? "h264_videotoolbox");
+      setTopazBitrate(task.topaz?.bitrate ?? "");
+      setTopazQv(task.topaz?.qv ?? 82);
+      setSlots([]);
+      scrollTimelineToBottom("smooth");
+      return;
+    }
     const taskMediaType = mediaTypeOf(task);
+    setComposerKind(taskMediaType === "image" ? "image_generation" : "video_generation");
     setMediaType(taskMediaType);
     setMode(taskMediaType === "image" ? "multimodal" : (task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal");
     setReferenceTransport(task.referenceTransport ?? "url");
@@ -701,6 +853,23 @@ function App() {
   }
 
   function regenerateTask(task: VideoTask) {
+    if (taskKindOf(task) === "video_upscale") {
+      void submitGenerationTask({
+        taskKind: "video_upscale",
+        mediaType: "video",
+        sourceTaskId: task.topaz?.sourceTaskId,
+        sourceLocalPath: task.topaz?.sourceTaskId ? undefined : task.topaz?.sourceLocalPath,
+        processMode: task.topaz?.processMode ?? "enhance",
+        processModes: task.topaz?.processModes ?? [task.topaz?.processMode ?? "enhance"],
+        aiModel: task.topaz?.aiModel ?? "proteus",
+        targetPreset: task.topaz?.targetPreset ?? "2x",
+        codec: task.topaz?.codec ?? "h264_videotoolbox",
+        bitrate: task.topaz?.bitrate,
+        qv: task.topaz?.qv ?? 82,
+        qualityParams: task.topaz?.qualityParams ?? {}
+      });
+      return;
+    }
     const taskMediaType = mediaTypeOf(task);
     void submitGenerationTask({
       mediaType: taskMediaType,
@@ -716,6 +885,18 @@ function App() {
       imageQuality: normalizeImageQuality(task.imageQuality),
       references: task.references ?? []
     });
+  }
+
+  function useTaskAsTopazSource(task: VideoTask) {
+    setComposerKind("video_upscale");
+    setMediaType("video");
+    setMode("multimodal");
+    setTopazSourceTaskId(task.id);
+    setTopazSourceLocalPath("");
+    setTopazSourceName(`${task.prompt.slice(0, 48) || "已生成视频"} · ${formatDate(task.createdAt)}`);
+    setSlots([]);
+    setView("generate");
+    scrollTimelineToBottom("smooth");
   }
 
   async function deleteTask(taskId: string) {
@@ -811,6 +992,41 @@ function App() {
     }
   }
 
+  async function uploadTopazSource(file: File) {
+    setBusy("topaz-upload");
+    setToast("");
+    const body = new FormData();
+    body.set("file", file);
+    try {
+      const response = await fetch("/api/uploads/video", { method: "POST", body });
+      const result = await readJsonOrThrow<{ localPath: string; localUrl?: string }>(response, "上传源视频失败");
+      setTopazSourceTaskId("");
+      setTopazSourceLocalPath(result.localPath);
+      setTopazSourceName(file.name);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function clearTopazSource() {
+    setTopazSourceTaskId("");
+    setTopazSourceLocalPath("");
+    setTopazSourceName("");
+  }
+
+  function toggleTopazProcessMode(value: TopazProcessMode) {
+    setTopazProcessModes((current) => {
+      const next = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value];
+      const safe = next.length ? next : current;
+      setTopazProcessMode(safe[0] ?? "enhance");
+      return safe;
+    });
+  }
+
   function swapFrameSlots() {
     setSlots((items) => {
       const first = items.find((slot) => slot.role === "first_frame");
@@ -831,13 +1047,16 @@ function App() {
   }
 
   const canSubmit = useMemo(() => {
+    if (composerKind === "video_upscale") {
+      return Boolean(config?.topazEnabled && (topazSourceTaskId || topazSourceLocalPath));
+    }
     if (!prompt.trim() || slots.some((slot) => slot.uploading)) return false;
     if (mediaType === "image") return Boolean(config?.image2APIKeyConfigured);
     if (!config?.arkAPIKeyConfigured) return false;
     const filled = slots.filter((slot) => slot.url);
     if (mode === "frames") return filled.some((slot) => slot.role === "first_frame") && filled.some((slot) => slot.role === "last_frame");
     return filled.length > 0 && filled.length <= multimodalReferenceLimit;
-  }, [config?.arkAPIKeyConfigured, config?.image2APIKeyConfigured, mediaType, mode, prompt, slots]);
+  }, [composerKind, config?.arkAPIKeyConfigured, config?.image2APIKeyConfigured, config?.topazEnabled, mediaType, mode, prompt, slots, topazSourceLocalPath, topazSourceTaskId]);
 
   return (
     <main className="dream-shell">
@@ -872,7 +1091,7 @@ function App() {
       </header>
 
       {view === "assets" ? (
-        <AssetLibrary tasks={generatedAssets} pollLogs={state.pollLogs} onEdit={restoreTask} onRegenerate={regenerateTask} onDelete={deleteTask} onDownloadDebug={downloadTaskDebug} />
+        <AssetLibrary tasks={generatedAssets} pollLogs={state.pollLogs} onEdit={restoreTask} onRegenerate={regenerateTask} onDelete={deleteTask} onDownloadDebug={downloadTaskDebug} onUpscale={useTaskAsTopazSource} />
       ) : (
         <section className="timeline" onScroll={handleTimelineScroll}>
           <div className="date-heading">5月19日</div>
@@ -898,6 +1117,7 @@ function App() {
               onRegenerate={() => regenerateTask(task)}
               onDelete={() => deleteTask(task.id)}
               onDownloadDebug={() => downloadTaskDebug(task.id)}
+              onUpscale={() => useTaskAsTopazSource(task)}
             />
           ))}
         </section>
@@ -905,23 +1125,41 @@ function App() {
 
       {view === "generate" && <section className="composer-wrap">
         {toast && <div className="toast"><span>{toast}</span><button onClick={() => setToast("")} title="关闭提示">×</button></div>}
-        <div className={`composer ${mediaType === "image" ? "image-composer" : ""}`} ref={composerRef}>
-          <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, remoteUrl: undefined, localPath: undefined, localUrl: undefined, error: "" } : slot))} onInsertReference={insertReference} />
-          <textarea
-            ref={promptRef}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder={mediaType === "image" ? "输入图片生成提示词。可以只写文字，也可以上传参考图后用 @图片 引用它们。" : mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：图片 1 模仿图片 2 的动作。"}
-          />
+        <div className={`composer ${mediaType === "image" ? "image-composer" : ""} ${composerKind === "video_upscale" ? "topaz-composer" : ""}`} ref={composerRef}>
+          {composerKind === "video_upscale" ? (
+            <TopazComposerPanel
+              sourceTaskId={topazSourceTaskId}
+              sourceLocalPath={topazSourceLocalPath}
+              sourceName={topazSourceName}
+              busy={busy}
+              onUpload={uploadTopazSource}
+              onClearSource={clearTopazSource}
+            />
+          ) : (
+            <>
+              <ReferenceSlots slots={slots} mode={mode} onSwapFrames={swapFrameSlots} onUpload={uploadSlot} onClear={(slotId) => setSlots((items) => items.map((slot) => slot.id === slotId ? { ...slot, url: undefined, remoteUrl: undefined, localPath: undefined, localUrl: undefined, error: "" } : slot))} onInsertReference={insertReference} />
+              <textarea
+                ref={promptRef}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder={mediaType === "image" ? "输入图片生成提示词。可以只写文字，也可以上传参考图后用 @图片 引用它们。" : mode === "frames" ? "输入文字，描述首帧到尾帧之间的画面内容、运动方式等。例如：镜头缓慢推近，人物抬头看向窗外。" : "上传最多9个参考素材，点击上方 @图片 按钮插入引用，再描述它们的关系。例如：图片 1 模仿图片 2 的动作。"}
+              />
+            </>
+          )}
           <div className="composer-controls">
-            <MenuButton active={openMenu?.kind === "media"} onClick={(event) => toggleMenu("media", event)} icon={mediaType === "image" ? <FileImage size={18} /> : <Sparkles size={18} />} label={mediaLabels[mediaType]} />
-            <MenuButton active={openMenu?.kind === "model"} onClick={(event) => toggleMenu("model", event)} icon={mediaType === "image" ? <FileImage size={18} /> : <Film size={18} />} label={mediaType === "image" ? selectedImageModel.label : selectedModel.label} />
-            {mediaType === "video" && <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<FileImage size={18} />} label={modeLabels[mode]} />}
-            <MenuButton active={openMenu?.kind === "ratio"} onClick={(event) => toggleMenu("ratio", event)} icon={<RatioIcon ratio={ratio} />} label={ratio} />
-            {mediaType === "video" && <MenuButton active={openMenu?.kind === "duration"} onClick={(event) => toggleMenu("duration", event)} icon={<Clock3 size={18} />} label={`${duration}s`} />}
-            <MenuButton active={openMenu?.kind === "resolution"} onClick={(event) => toggleMenu("resolution", event)} icon={<Gauge size={18} />} label={mediaType === "image" ? imageResolutionLabel(imageResolution) : resolution} />
-            {mediaType === "image" && <MenuButton active={openMenu?.kind === "quality"} onClick={(event) => toggleMenu("quality", event)} icon={<Sparkles size={18} />} label={selectedImageQuality.short} />}
-            {mediaType === "video" && <button className={`transport-toggle ${referenceTransport === "url" ? "active" : ""}`} onClick={() => setReferenceTransport(referenceTransport === "asset" ? "url" : "asset")} title="切换参考图片链路">
+            <MenuButton active={openMenu?.kind === "media"} onClick={(event) => toggleMenu("media", event)} icon={composerKind === "image_generation" ? <FileImage size={18} /> : composerKind === "video_upscale" ? <Gauge size={18} /> : <Sparkles size={18} />} label={composerKindLabels[composerKind]} />
+            {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazMode"} onClick={(event) => toggleMenu("topazMode", event)} icon={<Settings2 size={18} />} label={topazModeLabel(topazProcessModes)} />}
+            {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazModel"} onClick={(event) => toggleMenu("topazModel", event)} icon={<Film size={18} />} label={topazAIModelLabel(topazAIModel)} />}
+            {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazTarget"} onClick={(event) => toggleMenu("topazTarget", event)} icon={<Gauge size={18} />} label={topazTargetLabel(topazTargetPreset)} />}
+            {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazCodec"} onClick={(event) => toggleMenu("topazCodec", event)} icon={<FilePenLine size={18} />} label={topazCodecLabel(topazCodec)} />}
+            {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazQuality"} onClick={(event) => toggleMenu("topazQuality", event)} icon={<Sparkles size={18} />} label={`q:v ${topazQv ?? 82}`} />}
+            {composerKind !== "video_upscale" && <MenuButton active={openMenu?.kind === "model"} onClick={(event) => toggleMenu("model", event)} icon={mediaType === "image" ? <FileImage size={18} /> : <Film size={18} />} label={mediaType === "image" ? selectedImageModel.label : selectedModel.label} />}
+            {composerKind === "video_generation" && <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<FileImage size={18} />} label={modeLabels[mode]} />}
+            {composerKind !== "video_upscale" && <MenuButton active={openMenu?.kind === "ratio"} onClick={(event) => toggleMenu("ratio", event)} icon={<RatioIcon ratio={ratio} />} label={ratio} />}
+            {composerKind === "video_generation" && <MenuButton active={openMenu?.kind === "duration"} onClick={(event) => toggleMenu("duration", event)} icon={<Clock3 size={18} />} label={`${duration}s`} />}
+            {composerKind !== "video_upscale" && <MenuButton active={openMenu?.kind === "resolution"} onClick={(event) => toggleMenu("resolution", event)} icon={<Gauge size={18} />} label={mediaType === "image" ? imageResolutionLabel(imageResolution) : resolution} />}
+            {composerKind === "image_generation" && <MenuButton active={openMenu?.kind === "quality"} onClick={(event) => toggleMenu("quality", event)} icon={<Sparkles size={18} />} label={selectedImageQuality.short} />}
+            {composerKind === "video_generation" && <button className={`transport-toggle ${referenceTransport === "url" ? "active" : ""}`} onClick={() => setReferenceTransport(referenceTransport === "asset" ? "url" : "asset")} title="切换参考图片链路">
               {referenceTransport === "asset" ? "Asset" : "URL"}
             </button>}
             <button className="submit-button" disabled={!canSubmit || busy === "generation"} onClick={() => submitGenerationTask()}>
@@ -929,7 +1167,7 @@ function App() {
             </button>
           </div>
           {openMenu && (
-            <FloatingMenu kind={openMenu.kind} anchorX={openMenu.x} mediaType={mediaType} mode={mode} modelVersion={modelVersion} imageModel={imageModel} ratio={ratio} duration={duration} resolution={resolution} imageResolution={imageResolution} imageQuality={imageQuality} availableResolutions={availableResolutions} onMedia={switchMedia} onMode={switchMode} onModel={chooseModel} onImageModel={setImageModel} onRatio={chooseRatio} onDuration={setDuration} onResolution={setResolution} onImageResolution={chooseImageResolution} onImageQuality={setImageQuality} onClose={() => setOpenMenu(null)} />
+            <FloatingMenu kind={openMenu.kind} anchorX={openMenu.x} composerKind={composerKind} mediaType={mediaType} mode={mode} modelVersion={modelVersion} imageModel={imageModel} ratio={ratio} duration={duration} resolution={resolution} imageResolution={imageResolution} imageQuality={imageQuality} topazProcessModes={topazProcessModes} topazAIModel={topazAIModel} topazTargetPreset={topazTargetPreset} topazCodec={topazCodec} topazQv={topazQv ?? 82} topazBitrate={topazBitrate} availableResolutions={availableResolutions} onComposerKind={switchComposerKind} onMode={switchMode} onModel={chooseModel} onImageModel={setImageModel} onRatio={chooseRatio} onDuration={setDuration} onResolution={setResolution} onImageResolution={chooseImageResolution} onImageQuality={setImageQuality} onTopazProcessModeToggle={toggleTopazProcessMode} onTopazAIModel={setTopazAIModel} onTopazTargetPreset={setTopazTargetPreset} onTopazCodec={setTopazCodec} onTopazQv={setTopazQv} onTopazBitrate={setTopazBitrate} onClose={() => setOpenMenu(null)} />
           )}
         </div>
       </section>}
@@ -938,19 +1176,31 @@ function App() {
 }
 
 interface ComposerPayload {
+  taskKind?: TaskKind;
   mediaType: MediaType;
   projectId?: string;
-  mode: VideoMode;
-  referenceTransport: ReferenceTransport;
-  prompt: string;
-  modelVersion: VideoModelVersion;
-  ratio: GenerationRatio;
-  duration: number;
-  resolution: VideoResolution;
-  imageModel: ImageModelVersion;
-  imageResolution: ImageResolution;
-  imageQuality: ImageQuality;
-  references: VideoReference[];
+  mode?: VideoMode;
+  referenceTransport?: ReferenceTransport;
+  prompt?: string;
+  modelVersion?: VideoModelVersion;
+  ratio?: GenerationRatio;
+  duration?: number;
+  resolution?: VideoResolution;
+  imageModel?: ImageModelVersion;
+  imageResolution?: ImageResolution;
+  imageQuality?: ImageQuality;
+  references?: VideoReference[];
+  sourceTaskId?: string;
+  sourceLocalPath?: string;
+  processMode?: TopazProcessMode;
+  processModes?: TopazProcessMode[];
+  aiModel?: string;
+  targetPreset?: TopazTargetPreset;
+  codec?: string;
+  bitrate?: string;
+  qv?: number;
+  crf?: number;
+  qualityParams?: Record<string, number | boolean | string>;
 }
 
 function TopFilters({ open, timeFilter, mediaFilter, modeFilter, statusFilter, onOpen, onTime, onMedia, onMode, onStatus }: {
@@ -1142,6 +1392,12 @@ function mediaTypeOf(task: Pick<VideoTask, "mediaType">): MediaType {
   return task.mediaType === "image" ? "image" : "video";
 }
 
+function taskKindOf(task: Pick<VideoTask, "taskKind" | "mediaType" | "provider">): TaskKind {
+  if (task.taskKind) return task.taskKind;
+  if (task.provider === "topaz") return "video_upscale";
+  return task.mediaType === "image" ? "image_generation" : "video_generation";
+}
+
 function hasGeneratedAsset(task: VideoTask) {
   return mediaTypeOf(task) === "image"
     ? Boolean((task.imageUrls?.length ?? 0) || (task.imageDownloadPaths?.length ?? 0))
@@ -1158,6 +1414,13 @@ function mediaFilterLabel(value: MediaFilter) {
   if (value === "video") return "视频";
   if (value === "image") return "图片";
   return "类型";
+}
+
+function taskKindFilterLabel(value: TaskKindFilter) {
+  if (value === "video_generation") return "视频生成";
+  if (value === "image_generation") return "图片生成";
+  if (value === "video_upscale") return "视频放大";
+  return "全部任务";
 }
 
 function modeFilterLabel(value: ModeFilter) {
@@ -1316,13 +1579,63 @@ function UploadSlot({ slot, onUpload, onClear, onInsertReference }: { slot: Refe
   );
 }
 
+function TopazComposerPanel({ sourceTaskId, sourceLocalPath, sourceName, busy, onUpload, onClearSource }: {
+  sourceTaskId: string;
+  sourceLocalPath: string;
+  sourceName: string;
+  busy: string;
+  onUpload: (file: File) => void;
+  onClearSource: () => void;
+}) {
+  return (
+    <section className="topaz-panel">
+      <div className="reference-strip topaz-video-strip">
+        <TopazUploadSlot
+          selected={Boolean(sourceTaskId || sourceLocalPath)}
+          label={busy === "topaz-upload" ? "上传中" : sourceName || "上传源视频"}
+          uploading={busy === "topaz-upload"}
+          onUpload={onUpload}
+          onClear={onClearSource}
+        />
+      </div>
+    </section>
+  );
+}
+
+function TopazUploadSlot({ selected, label, uploading, onUpload, onClear }: { selected: boolean; label: string; uploading: boolean; onUpload: (file: File) => void; onClear: () => void }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <button
+      type="button"
+      className={`upload-slot topaz-video-slot ${selected ? "filled" : ""}`}
+      onClick={() => inputRef.current?.click()}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        const file = event.dataTransfer.files[0];
+        if (file) onUpload(file);
+      }}
+    >
+      {uploading ? <Loader2 className="spin" size={20} /> : selected ? <Film size={22} /> : <UploadCloud size={22} />}
+      <span>{label}</span>
+      {selected && <Trash2 className="slot-clear" size={14} onClick={(event) => { event.stopPropagation(); onClear(); }} />}
+      <input ref={inputRef} type="file" accept="video/*" hidden onChange={(event) => {
+        const file = event.currentTarget.files?.[0];
+        if (file) onUpload(file);
+        event.currentTarget.value = "";
+      }} />
+    </button>
+  );
+}
+
 function MenuButton({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: (event: React.MouseEvent<HTMLButtonElement>) => void }) {
   return <button className={`menu-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span><ChevronDown size={16} /></button>;
 }
 
-function FloatingMenu({ kind, anchorX, mediaType, mode, modelVersion, imageModel, ratio, duration, resolution, imageResolution, imageQuality, availableResolutions, onMedia, onMode, onModel, onImageModel, onRatio, onDuration, onResolution, onImageResolution, onImageQuality, onClose }: {
+function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersion, imageModel, ratio, duration, resolution, imageResolution, imageQuality, topazProcessModes, topazAIModel, topazTargetPreset, topazCodec, topazQv, topazBitrate, availableResolutions, onComposerKind, onMode, onModel, onImageModel, onRatio, onDuration, onResolution, onImageResolution, onImageQuality, onTopazProcessModeToggle, onTopazAIModel, onTopazTargetPreset, onTopazCodec, onTopazQv, onTopazBitrate, onClose }: {
   kind: MenuKind;
   anchorX: number;
+  composerKind: ComposerKind;
   mediaType: MediaType;
   mode: VideoMode;
   modelVersion: VideoModelVersion;
@@ -1332,8 +1645,14 @@ function FloatingMenu({ kind, anchorX, mediaType, mode, modelVersion, imageModel
   resolution: VideoResolution;
   imageResolution: ImageResolution;
   imageQuality: ImageQuality;
+  topazProcessModes: TopazProcessMode[];
+  topazAIModel: string;
+  topazTargetPreset: TopazTargetPreset;
+  topazCodec: string;
+  topazQv: number;
+  topazBitrate: string;
   availableResolutions: VideoResolution[];
-  onMedia: (value: MediaType) => void;
+  onComposerKind: (value: ComposerKind) => void;
   onMode: (value: VideoMode) => void;
   onModel: (value: VideoModelVersion) => void;
   onImageModel: (value: ImageModelVersion) => void;
@@ -1342,11 +1661,17 @@ function FloatingMenu({ kind, anchorX, mediaType, mode, modelVersion, imageModel
   onResolution: (value: VideoResolution) => void;
   onImageResolution: (value: ImageResolution) => void;
   onImageQuality: (value: ImageQuality) => void;
+  onTopazProcessModeToggle: (value: TopazProcessMode) => void;
+  onTopazAIModel: (value: string) => void;
+  onTopazTargetPreset: (value: TopazTargetPreset) => void;
+  onTopazCodec: (value: string) => void;
+  onTopazQv: (value: number) => void;
+  onTopazBitrate: (value: string) => void;
   onClose: () => void;
 }) {
   const style = { "--menu-anchor-x": `${Math.round(anchorX)}px` } as React.CSSProperties;
   if (kind === "media") {
-    return <div className="floating-menu media-menu" style={style}><p>选择生成类型</p>{(["video", "image"] as MediaType[]).map((item) => <button key={item} className={mediaType === item ? "selected" : ""} onClick={() => onMedia(item)}>{item === "image" ? <FileImage size={18} /> : <Film size={18} />}{mediaLabels[item]}{mediaType === item && <Check className="option-check" size={18} />}</button>)}</div>;
+    return <div className="floating-menu media-menu" style={style}><p>选择生成类型</p>{(["video_generation", "image_generation", "video_upscale"] as ComposerKind[]).map((item) => <button key={item} className={composerKind === item ? "selected" : ""} onClick={() => onComposerKind(item)}>{item === "image_generation" ? <FileImage size={18} /> : item === "video_upscale" ? <Gauge size={18} /> : <Film size={18} />}{composerKindLabels[item]}{composerKind === item && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "ratio") {
     if (mediaType === "image") {
@@ -1376,6 +1701,21 @@ function FloatingMenu({ kind, anchorX, mediaType, mode, modelVersion, imageModel
   if (kind === "quality") {
     return <div className="floating-menu quality-menu" style={style}><p>选择图片质量</p>{imageQualityOptions.map((item) => <button key={item.value} className={imageQuality === item.value ? "selected" : ""} onClick={() => { onImageQuality(item.value); onClose(); }}><Sparkles size={18} /><span>{item.label}</span><em>{item.value}</em>{imageQuality === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
   }
+  if (kind === "topazMode") {
+    return <div className="floating-menu topaz-mode-menu" style={style}><p>选择处理模式</p>{topazProcessOptions.map((item) => <button key={item.value} className={topazProcessModes.includes(item.value) ? "selected" : ""} onClick={() => onTopazProcessModeToggle(item.value)}><Settings2 size={18} /><span>{item.label}</span><em>{item.value}</em>{topazProcessModes.includes(item.value) && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
+  if (kind === "topazModel") {
+    return <div className="floating-menu model-menu" style={style}><p>选择 Topaz AI 模型</p>{topazAIModelOptions.map((item) => <button key={item.value} className={topazAIModel === item.value ? "selected" : ""} onClick={() => { onTopazAIModel(item.value); onClose(); }}><Film size={18} /><span>{item.label}</span><em>{item.value}</em>{topazAIModel === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
+  if (kind === "topazTarget") {
+    return <div className="floating-menu resolution-menu" style={style}><p>选择目标规格</p>{topazTargetOptions.map((item) => <button key={item.value} className={topazTargetPreset === item.value ? "selected" : ""} onClick={() => { onTopazTargetPreset(item.value); onClose(); }}><Gauge size={18} /><span>{item.label}</span><em>{item.value.endsWith("x") ? "倍数" : "长边换算"}</em>{topazTargetPreset === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
+  if (kind === "topazCodec") {
+    return <div className="floating-menu model-menu" style={style}><p>选择编码</p>{topazCodecOptions.map((item) => <button key={item} className={topazCodec === item ? "selected" : ""} onClick={() => { onTopazCodec(item); onClose(); }}><FilePenLine size={18} /><span>{topazCodecLabel(item)}</span><em>{item}</em>{topazCodec === item && <Check className="option-check" size={18} />}</button>)}</div>;
+  }
+  if (kind === "topazQuality") {
+    return <div className="floating-menu topaz-quality-menu" style={style}><p>输出质量</p><label><span>q:v {topazQv}</span><input type="range" min="1" max="180" value={topazQv} onChange={(event) => onTopazQv(Number(event.currentTarget.value))} /></label><label><span>固定码率</span><input value={topazBitrate} onChange={(event) => onTopazBitrate(event.currentTarget.value)} placeholder="可选，如 10M" /></label></div>;
+  }
   if (kind === "model") {
     if (mediaType === "image") {
       return <div className="floating-menu model-menu" style={style}><p>选择图片模型</p>{imageModelOptions.map((item) => <button key={item.value} className={imageModel === item.value ? "selected" : ""} onClick={() => { onImageModel(item.value); onClose(); }}><FileImage size={18} />{item.label}{imageModel === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
@@ -1389,13 +1729,14 @@ function RatioIcon({ ratio }: { ratio: string }) {
   return <span className={`ratio-icon r-${ratio.replace(":", "-")}`} />;
 }
 
-function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete, onDownloadDebug }: {
+function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete, onDownloadDebug, onUpscale }: {
   tasks: VideoTask[];
   pollLogs: PollLog[];
   onEdit: (task: VideoTask) => void;
   onRegenerate: (task: VideoTask) => void;
   onDelete: (taskId: string) => void;
   onDownloadDebug: (taskId: string) => void;
+  onUpscale: (task: VideoTask) => void;
 }) {
   return (
     <section className="asset-library">
@@ -1415,6 +1756,7 @@ function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete, onDownl
             onRegenerate={() => onRegenerate(task)}
             onDelete={() => onDelete(task.id)}
             onDownloadDebug={() => onDownloadDebug(task.id)}
+            onUpscale={() => onUpscale(task)}
           />
         ))}
       </div>
@@ -1422,9 +1764,12 @@ function AssetLibrary({ tasks, pollLogs, onEdit, onRegenerate, onDelete, onDownl
   );
 }
 
-function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete, onDownloadDebug }: { task: VideoTask; selected: boolean; latestLog?: PollLog; onEdit: () => void; onRegenerate: () => void; onDelete: () => void; onDownloadDebug: () => void }) {
+function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete, onDownloadDebug, onUpscale }: { task: VideoTask; selected: boolean; latestLog?: PollLog; onEdit: () => void; onRegenerate: () => void; onDelete: () => void; onDownloadDebug: () => void; onUpscale?: () => void }) {
   const taskMediaType = mediaTypeOf(task);
-  const model = taskMediaType === "image" ? modelLabel(task.imageModel || "gpt-image-2") : modelOptions.find((item) => item.value === task.modelVersion)?.label ?? "Seedance 2.0";
+  const taskKind = taskKindOf(task);
+  const model = taskKind === "video_upscale"
+    ? `Topaz ${topazAIModelOptions.find((item) => item.value === task.topaz?.aiModel)?.label ?? task.topaz?.aiModel ?? "Proteus"}`
+    : taskMediaType === "image" ? modelLabel(task.imageModel || "gpt-image-2") : modelOptions.find((item) => item.value === task.modelVersion)?.label ?? "Seedance 2.0";
   const taskImageRatio = normalizeImageRatio(task.ratio);
   const taskImageResolution = normalizeImageResolution(task.imageResolution, task.ratio, task.imageSize);
   const taskImageQuality = normalizeImageQuality(task.imageQuality);
@@ -1434,13 +1779,15 @@ function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete, o
         <ReferenceThumbs references={task.references ?? []} />
         <p>{task.prompt}</p>
         <span>{model}</span>
-        {taskMediaType === "video" && <span>{task.duration ?? 5}s</span>}
-        {taskMediaType === "video" && <span>{task.resolution ?? "720p"}</span>}
+        {taskKind === "video_upscale" && <span>{topazProcessModeLabel(task.topaz)}</span>}
+        {taskKind === "video_upscale" && <span>{topazTargetLabel(task.topaz?.targetPreset)}</span>}
+        {taskKind === "video_generation" && <span>{task.duration ?? 5}s</span>}
+        {taskKind === "video_generation" && <span>{task.resolution ?? "720p"}</span>}
         {taskMediaType === "image" && <span>{taskImageRatio}</span>}
         {taskMediaType === "image" && <span>{imageResolutionLabel(taskImageResolution)}</span>}
         {taskMediaType === "image" && <span>{imageQualityLabel(taskImageQuality)}</span>}
-        <span>{taskMediaType === "image" ? "图片生成" : modeLabels[(task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal"]}</span>
-        <span>{formatTokenUsage(resolveClientTokenUsage(task))}</span>
+        <span>{taskKind === "video_upscale" ? "视频放大" : taskMediaType === "image" ? "图片生成" : modeLabels[(task.mode === "frames" || task.mode === "multimodal") ? task.mode : "multimodal"]}</span>
+        <span>{taskKind === "video_upscale" ? "不消耗 Token" : formatTokenUsage(resolveClientTokenUsage(task))}</span>
         <span className={`status-badge ${task.status}`}>{taskStatusLabel(task, latestLog)}</span>
       </div>
       <div className="result-frame">
@@ -1449,6 +1796,7 @@ function TaskCard({ task, selected, latestLog, onEdit, onRegenerate, onDelete, o
       <div className="task-actions">
         <button onClick={onEdit}><PencilLine size={18} />重新编辑</button>
         <button onClick={onRegenerate}><CopyPlus size={18} />再次生成</button>
+        {taskMediaType === "video" && task.downloadPath && onUpscale && <button onClick={onUpscale}><Gauge size={18} />放大</button>}
         <button onClick={onDownloadDebug}><Download size={18} />下载状态</button>
         <button className="more-button"><RefreshCcw size={18} />{task.status}</button>
         <button className="delete-record" onClick={onDelete} title="删除记录，不删除下载文件"><Trash2 size={16} /></button>
@@ -1469,6 +1817,11 @@ function imagePreviewUrl(task: VideoTask) {
 }
 
 function taskStatusLabel(task: VideoTask, latestLog?: PollLog) {
+  if (taskKindOf(task) === "video_upscale") {
+    if (task.status === "succeeded" && task.downloadPath) return "Topaz 视频已输出";
+    if (task.status === "succeeded") return "Topaz 处理完成";
+    return latestLog?.message || task.status;
+  }
   if (mediaTypeOf(task) === "image") {
     if (task.status === "succeeded" && (task.imageDownloadPaths?.length ?? 0) > 0) return "图片已下载";
     if (task.status === "succeeded") return "图片生成完成";
@@ -1504,6 +1857,7 @@ function ManagerApp() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
+  const [publicConfigState, setPublicConfigState] = useState<PublicConfig | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
   const [localUsage, setLocalUsage] = useState<LocalUsageSummary | null>(null);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
@@ -1517,14 +1871,16 @@ function ManagerApp() {
 
   async function refreshManager() {
     const headers = { "x-sts-manager-token": managerToken };
-    const [settingsResult, stateResult, localUsageResult, storageResult] = await Promise.allSettled([
+    const [settingsResult, publicConfigResult, stateResult, localUsageResult, storageResult] = await Promise.allSettled([
       fetchManagerJson<RuntimeSettings>("/api/runtime-settings", headers),
+      fetchManagerJson<PublicConfig>("/api/config"),
       fetchManagerJson<AppState>("/api/shell-state"),
       fetchManagerJson<LocalUsageSummary>("/api/manager/usage/local", headers),
       fetchManagerJson<StorageStats>("/api/manager/storage", headers)
     ]);
     if (settingsResult.status === "fulfilled") setSettings(settingsResult.value);
-    if (stateResult.status === "fulfilled") setState(stateResult.value);
+    if (publicConfigResult.status === "fulfilled") setPublicConfigState(publicConfigResult.value);
+    if (stateResult.status === "fulfilled") setState(normalizeAppState(stateResult.value) as AppState);
     if (localUsageResult.status === "fulfilled") setLocalUsage(localUsageResult.value);
     if (storageResult.status === "fulfilled") setStorageStats(storageResult.value);
   }
@@ -1745,6 +2101,12 @@ function ManagerApp() {
                   <SettingField label="MAX_POLL_RETRY_COUNT" value={settings.maxPollRetryCount} onChange={(value) => setSettings({ ...settings, maxPollRetryCount: value })} />
                   <SettingField label="MAX_CONCURRENT_VIDEO_TASKS" value={settings.maxConcurrentVideoTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentVideoTasks: value })} />
                   <SettingField label="MAX_CONCURRENT_IMAGE_TASKS" value={settings.maxConcurrentImageTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentImageTasks: value })} />
+                  <SettingField label="TOPAZ_ENABLED" value={settings.topazEnabled} onChange={(value) => setSettings({ ...settings, topazEnabled: value })} />
+                  <SettingField label="TOPAZ_CLI_PATH" value={settings.topazCLIPath} onChange={(value) => setSettings({ ...settings, topazCLIPath: value })} />
+                  <SettingField label="TOPAZ_WORK_DIR" value={settings.topazWorkDir} onChange={(value) => setSettings({ ...settings, topazWorkDir: value })} />
+                  <SettingField label="MAX_CONCURRENT_TOPAZ_TASKS" value={settings.maxConcurrentTopazTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentTopazTasks: value })} />
+                  <SettingField label="TOPAZ_DEFAULT_AI_MODEL" value={settings.topazDefaultAIModel} onChange={(value) => setSettings({ ...settings, topazDefaultAIModel: value })} />
+                  {publicConfigState && <div className={`settings-status ${publicConfigState.topazCLIAvailable ? "ok" : "error"}`}>{publicConfigState.topazCLIStatus}</div>}
                   <SettingField label="TOKEN_PRICE_PER_THOUSAND" value={settings.tokenPricePerThousand} onChange={(value) => setSettings({ ...settings, tokenPricePerThousand: value })} />
                   <SettingField label="IMAGE_TOKEN_PRICE_PER_THOUSAND" value={settings.imageTokenPricePerThousand} onChange={(value) => setSettings({ ...settings, imageTokenPricePerThousand: value })} />
                   <SettingField label="IMAGE2_API_KEY" value={settings.image2APIKey} onChange={(value) => setSettings({ ...settings, image2APIKey: value })} />
@@ -1920,6 +2282,9 @@ function ManagerProjects({
               <span>{usage.requests} 个任务</span>
               <span>成功 {usage.succeeded}</span>
               <span>失败 {usage.failed}</span>
+              <span>视频生成 {usage.taskKinds?.video_generation ?? 0}</span>
+              <span>图片生成 {usage.taskKinds?.image_generation ?? 0}</span>
+              <span>Topaz {usage.taskKinds?.video_upscale ?? 0}</span>
               <span>{formatTokenNumber(usage.totalTokens)} Token</span>
               <span>{formatCurrency(usage.estimatedCost)}</span>
               <span>创建 {formatDate(project.createdAt)}</span>
@@ -1955,6 +2320,11 @@ function emptyProjectUsage(project: VideoProject): ProjectUsageSummary {
     mediaTypes: {
       video: emptyMediaUsage(),
       image: emptyMediaUsage()
+    },
+    taskKinds: {
+      video_generation: 0,
+      image_generation: 0,
+      video_upscale: 0
     },
     buckets: { hour: [], day: [], week: [], month: [] },
     bucketsByMediaType: {
@@ -2052,6 +2422,7 @@ function formatTokenNumber(value: number) {
 function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownloadDebug }: { managerToken: string; projects: VideoProject[]; busy: string; onHardDelete: (taskId: string) => Promise<void> | void; onDownloadDebug: (taskId: string) => void }) {
   const [query, setQuery] = useState("");
   const [mediaType, setMediaType] = useState<MediaFilter>("all");
+  const [taskKind, setTaskKind] = useState<TaskKindFilter>("all");
   const [status, setStatus] = useState<"all" | VideoTask["status"] | "hidden">("all");
   const [sort, setSort] = useState<"newest" | "oldest" | "status" | "project">("newest");
   const [records, setRecords] = useState<VideoTask[]>([]);
@@ -2068,6 +2439,7 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
         before: reset ? undefined : nextCursor,
         query,
         mediaType,
+        taskKind,
         status,
         sort
       }), {
@@ -2087,7 +2459,7 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
     setNextCursor(undefined);
     setHasMore(false);
     void loadMoreManagerRecords(true);
-  }, [managerToken, query, mediaType, status, sort]);
+  }, [managerToken, query, mediaType, taskKind, status, sort]);
 
   async function handleHardDelete(taskId: string) {
     await onHardDelete(taskId);
@@ -2103,6 +2475,12 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
           <option value="all">全部类型</option>
           <option value="video">视频</option>
           <option value="image">图片</option>
+        </select>
+        <select value={taskKind} onChange={(event) => setTaskKind(event.currentTarget.value as TaskKindFilter)}>
+          <option value="all">全部任务</option>
+          <option value="video_generation">视频生成</option>
+          <option value="image_generation">图片生成</option>
+          <option value="video_upscale">视频放大</option>
         </select>
         <select value={status} onChange={(event) => setStatus(event.currentTarget.value as typeof status)}>
           <option value="all">全部状态</option>
@@ -2129,13 +2507,14 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
           <div className="manager-record-body">
             <div className="manager-record-meta">
               <span><i className={`status-dot ${task.status}`} />{task.hiddenAt ? "已隐藏" : taskStatusLabel(task)}</span>
+              <span>{taskKindLabels[taskKindOf(task)]}</span>
               <span>{projectName(projects, task.projectId ?? "")}{projects.find((project) => project.id === task.projectId)?.deletedAt ? "（已删除）" : ""}</span>
               <span>{formatDate(task.createdAt)}</span>
             </div>
             <p>{task.prompt}</p>
             <div className="manager-record-foot">
               <span>{mediaAssetLabel(task)}</span>
-              <span>{formatTokenUsage(resolveClientTokenUsage(task))}</span>
+              <span>{taskKindOf(task) === "video_upscale" ? "不消耗 Token" : formatTokenUsage(resolveClientTokenUsage(task))}</span>
               <button className="hard-delete secondary" onClick={() => onDownloadDebug(task.id)}>
                 <Download size={15} />下载状态
               </button>
@@ -2188,7 +2567,29 @@ function formatTokenUsage(tokenUsage?: TokenUsage) {
 }
 
 function resolveClientTokenUsage(task: VideoTask): TokenUsage | undefined {
+  if (taskKindOf(task) === "video_upscale") return undefined;
   return task.tokenUsage ?? extractClientTokenUsage(task.raw);
+}
+
+function topazTargetLabel(value: TopazTargetPreset | undefined) {
+  return topazTargetOptions.find((item) => item.value === value)?.label ?? "2x";
+}
+
+function topazAIModelLabel(value: string) {
+  return topazAIModelOptions.find((item) => item.value === value)?.label ?? value;
+}
+
+function topazCodecLabel(value: string) {
+  return value.replace("_videotoolbox", "").replace("lib", "").toUpperCase();
+}
+
+function topazModeLabel(modes: TopazProcessMode[]) {
+  return modes.map((mode) => topazProcessOptions.find((item) => item.value === mode)?.label ?? mode).join(" + ");
+}
+
+function topazProcessModeLabel(topaz: TopazTaskMetadata | undefined) {
+  const modes = normalizeTopazProcessModes(topaz?.processModes, topaz?.processMode);
+  return topazModeLabel(modes);
 }
 
 function extractClientTokenUsage(source: unknown): TokenUsage | undefined {
@@ -2235,6 +2636,11 @@ function normalizeModelVersion(value?: string): VideoModelVersion {
 
 function normalizeMediaType(value?: string): MediaType {
   return value === "image" ? "image" : "video";
+}
+
+function normalizeComposerKind(value?: string, legacyMediaType?: string): ComposerKind {
+  if (value === "video_generation" || value === "image_generation" || value === "video_upscale") return value;
+  return legacyMediaType === "image" ? "image_generation" : "video_generation";
 }
 
 function normalizeMode(value?: string): VideoMode {
@@ -2284,6 +2690,31 @@ function normalizeImageResolution(value: string | undefined, ratio?: string, siz
 
 function normalizeImageQuality(value: string | undefined): ImageQuality {
   return imageQualityOptions.find((item) => item.value === value)?.value ?? defaultImageQuality;
+}
+
+function normalizeTopazProcessMode(value: string | undefined): TopazProcessMode {
+  return topazProcessOptions.find((item) => item.value === value)?.value ?? "enhance";
+}
+
+function normalizeTopazProcessModes(values: string[] | undefined, fallback?: string): TopazProcessMode[] {
+  const normalized = (values ?? [])
+    .map((value) => topazProcessOptions.find((item) => item.value === value)?.value)
+    .filter((value): value is TopazProcessMode => Boolean(value));
+  const unique = normalized.filter((value, index) => normalized.indexOf(value) === index);
+  return unique.length ? unique : [normalizeTopazProcessMode(fallback)];
+}
+
+function normalizeTopazAIModel(value: string | undefined) {
+  return topazAIModelOptions.find((item) => item.value === value)?.value ?? "proteus";
+}
+
+function normalizeTopazTargetPreset(value: string | undefined): TopazTargetPreset {
+  return topazTargetOptions.find((item) => item.value === value)?.value ?? "2x";
+}
+
+function normalizeTopazQv(value: number | undefined): number {
+  if (value === undefined) return 82;
+  return Number.isInteger(value) && value >= 1 && value <= 1024 ? value : 82;
 }
 
 function imageSizeFor(ratio: ImageRatio, resolution: ImageResolution) {

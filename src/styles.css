@@ -395,6 +395,11 @@ button:disabled {
   min-height: 174px;
 }
 
+.composer.topaz-composer {
+  width: min(1360px, calc(100vw - 390px));
+  min-height: 214px;
+}
+
 .composer:has(.reference-strip.multimodal) {
   min-height: 310px;
 }
@@ -420,6 +425,48 @@ button:disabled {
 
 .composer textarea::placeholder {
   color: #737b89;
+}
+
+.topaz-panel {
+  padding-bottom: 54px;
+}
+
+.topaz-video-strip {
+  display: flex;
+  align-items: stretch;
+}
+
+.topaz-video-slot {
+  width: 216px;
+  min-height: 88px;
+  text-align: left;
+}
+
+.topaz-quality-menu {
+  min-width: 320px;
+}
+
+.topaz-quality-menu label {
+  display: grid;
+  gap: 8px;
+  padding: 8px 12px;
+  color: #dfe6f2;
+  font-size: 12px;
+}
+
+.topaz-quality-menu input {
+  width: 100%;
+  min-width: 0;
+}
+
+.topaz-quality-menu input:not([type]),
+.topaz-quality-menu input[type="text"] {
+  min-height: 34px;
+  border: 1px solid #303847;
+  border-radius: 8px;
+  background: #10131a;
+  color: #dfe6f2;
+  padding: 0 10px;
 }
 
 .reference-strip {
@@ -474,6 +521,13 @@ button:disabled {
   background: #242732;
   color: #8d95a4;
   transform: rotate(-7deg);
+}
+
+.reference-strip.topaz-video-strip .topaz-video-slot {
+  width: 216px;
+  height: 88px;
+  padding: 10px 12px;
+  transform: none;
 }
 
 .reference-strip.multimodal .upload-slot {
@@ -1223,6 +1277,26 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.settings-status {
+  border: 1px solid #303847;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #10131a;
+  color: #dfe6f2;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-status.ok {
+  border-color: rgba(88, 166, 117, 0.45);
+  color: #8fe1aa;
+}
+
+.settings-status.error {
+  border-color: rgba(225, 97, 97, 0.45);
+  color: #ff9a9a;
 }
 
 .setting-field {

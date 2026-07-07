@@ -15,9 +15,26 @@ const imageExtensions: Record<string, string> = {
   "image/gif": ".gif"
 };
 
+const videoExtensions: Record<string, string> = {
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+  "video/x-msvideo": ".avi",
+  "video/x-matroska": ".mkv",
+  "video/webm": ".webm"
+};
+
 export async function saveUploadedImageLocally(file: File, uploadDir: string): Promise<LocalUpload> {
   await mkdir(uploadDir, { recursive: true });
   const extension = extensionForFile(file);
+  const name = `${Date.now()}-${randomUUID()}${extension}`;
+  const path = resolve(uploadDir, name);
+  await writeFile(path, Buffer.from(await file.arrayBuffer()));
+  return { path, url: `/api/uploads/local/${name}` };
+}
+
+export async function saveUploadedVideoLocally(file: File, uploadDir: string): Promise<LocalUpload> {
+  await mkdir(uploadDir, { recursive: true });
+  const extension = extensionForFileMap(file, videoExtensions, ".mp4");
   const name = `${Date.now()}-${randomUUID()}${extension}`;
   const path = resolve(uploadDir, name);
   await writeFile(path, Buffer.from(await file.arrayBuffer()));
@@ -42,10 +59,14 @@ export async function fileFromLocalUpload(path: string, fallbackName = "referenc
 }
 
 function extensionForFile(file: File) {
-  const byType = imageExtensions[file.type.toLowerCase()];
+  return extensionForFileMap(file, imageExtensions, ".png");
+}
+
+function extensionForFileMap(file: File, byMimeType: Record<string, string>, fallback: string) {
+  const byType = byMimeType[file.type.toLowerCase()];
   if (byType) return byType;
   const byName = extname(file.name).toLowerCase();
-  return byName && /^[a-z0-9.]+$/.test(byName) ? byName : ".png";
+  return byName && /^[a-z0-9.]+$/.test(byName) ? byName : fallback;
 }
 
 function mimeTypeForPath(path: string) {
