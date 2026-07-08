@@ -1,4 +1,5 @@
 import type { ImageTaskRequest, VideoTaskRequest } from "./lib/requestSchemas.js";
+import type { LocalUsageSummary } from "./lib/usageStats.js";
 import type { DatabaseShape, RuntimeSettings, StorageStats, VideoProject, VideoTask } from "./types.js";
 
 export const apiV1Prefix = "/api/v1" as const;
@@ -57,6 +58,7 @@ export type ProjectListResponse = VideoProject[];
 export type ShellStateResponse = Omit<DatabaseShape, "videoTasks"> & { videoTasks: [] };
 export type RuntimeSettingsResponse = RuntimeSettings;
 export type StorageStatsResponse = StorageStats;
+export type ManagerUsageResponse = LocalUsageSummary;
 
 export interface APIClientOptions {
   baseURL?: string;
@@ -101,6 +103,7 @@ export function createAPIClient(options: APIClientOptions = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
-    })
+    }),
+    getManagerUsage: (query = "") => request<ManagerUsageResponse>(`${apiV1Paths.managerUsage}${query}`)
   };
 }

@@ -63,6 +63,8 @@ type StatusFilter = "all" | VideoTask["status"];
 type UsageGranularity = "hour" | "day" | "week" | "month";
 type UsageMetricMode = "tokens" | "cost";
 type ProjectCardSize = "compact" | "regular" | "wide";
+type ProjectSortField = "cost" | "tokens" | "requests" | "succeeded" | "failed" | "name" | "updatedAt" | "createdAt";
+type SortDirection = "asc" | "desc";
 
 interface OpenMenuState {
   kind: MenuKind;
@@ -1866,22 +1868,31 @@ function ManagerApp() {
   const [usageMetric, setUsageMetric] = useState<UsageMetricMode>("tokens");
   const [usageMediaType, setUsageMediaType] = useState<MediaFilter>("all");
   const [cardSize, setCardSize] = useState<ProjectCardSize>("regular");
+  const [usageFrom, setUsageFrom] = useState("");
+  const [usageTo, setUsageTo] = useState("");
+  const [projectSortField, setProjectSortField] = useState<ProjectSortField>("cost");
+  const [projectSortDirection, setProjectSortDirection] = useState<SortDirection>("desc");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
   async function refreshManager() {
     const headers = { "x-sts-manager-token": managerToken };
+    const usageQuery = managerUsageQuery(usageFrom, usageTo);
     const [settingsResult, publicConfigResult, stateResult, localUsageResult, storageResult] = await Promise.allSettled([
       fetchManagerJson<RuntimeSettings>("/api/runtime-settings", headers),
       fetchManagerJson<PublicConfig>("/api/config"),
       fetchManagerJson<AppState>("/api/shell-state"),
-      fetchManagerJson<LocalUsageSummary>("/api/manager/usage/local", headers),
+      fetchManagerJson<LocalUsageSummary>(`/api/manager/usage/local${usageQuery}`, headers),
       fetchManagerJson<StorageStats>("/api/manager/storage", headers)
     ]);
     if (settingsResult.status === "fulfilled") setSettings(settingsResult.value);
     if (publicConfigResult.status === "fulfilled") setPublicConfigState(publicConfigResult.value);
     if (stateResult.status === "fulfilled") setState(normalizeAppState(stateResult.value) as AppState);
-    if (localUsageResult.status === "fulfilled") setLocalUsage(localUsageResult.value);
+    if (localUsageResult.status === "fulfilled") {
+      setLocalUsage(localUsageResult.value);
+      setMessage((current) => current.startsWith("用量统计加载失败") ? "" : current);
+    }
+    if (localUsageResult.status === "rejected") setMessage(`用量统计加载失败：${localUsageResult.reason instanceof Error ? localUsageResult.reason.message : String(localUsageResult.reason)}`);
     if (storageResult.status === "fulfilled") setStorageStats(storageResult.value);
   }
 
@@ -1890,7 +1901,7 @@ function ManagerApp() {
     void refreshManager();
     const timer = window.setInterval(refreshManager, 3000);
     return () => window.clearInterval(timer);
-  }, [authenticated]);
+  }, [authenticated, managerToken, usageFrom, usageTo]);
 
   async function login(event: React.FormEvent) {
     event.preventDefault();
@@ -2032,6 +2043,36 @@ function ManagerApp() {
             {busy === "open-database" ? <Loader2 className="spin" size={18} /> : <Folder size={18} />}打开媒体数据库
           </button>}
           {managerView === "projects" && <div className="monitor-controls">
+            <label className="monitor-field">
+              <span>开始</span>
+              <input type="datetime-local" value={usageFrom} onChange={(event) => setUsageFrom(event.currentTarget.value)} />
+            </label>
+            <label className="monitor-field">
+              <span>结束</span>
+              <input type="datetime-local" value={usageTo} onChange={(event) => setUsageTo(event.currentTarget.value)} />
+            </label>
+            <button className="monitor-clear" type="button" onClick={() => { setUsageFrom(""); setUsageTo(""); }}>清空筛选</button>
+            <label className="monitor-field">
+              <span>排序</span>
+              <select value={projectSortField} onChange={(event) => setProjectSortField(event.currentTarget.value as ProjectSortField)}>
+                <option value="cost">费用</option>
+                <option value="tokens">Token</option>
+                <option value="requests">任务数</option>
+                <option value="succeeded">成功数</option>
+                <option value="failed">失败数</option>
+                <option value="name">项目名</option>
+                <option value="updatedAt">更新时间</option>
+                <option value="createdAt">创建时间</option>
+              </select>
+            </label>
+            <SegmentedControl
+              value={projectSortDirection}
+              options={[
+                ["desc", "降序"],
+                ["asc", "升序"]
+              ]}
+              onChange={(value) => setProjectSortDirection(value as SortDirection)}
+            />
             <SegmentedControl
               value={usageMediaType}
               options={[
@@ -2125,7 +2166,7 @@ function ManagerApp() {
         </section> : managerView === "records" ? (
           <ManagerRecords managerToken={managerToken} projects={state.videoProjects} busy={busy} onHardDelete={hardDeleteTask} onDownloadDebug={downloadTaskDebug} />
         ) : (
-          <ManagerProjects projects={state.videoProjects} localUsage={localUsage} mediaFilter={usageMediaType} granularity={usageGranularity} metric={usageMetric} cardSize={cardSize} busy={busy} onRestoreProject={restoreProject} />
+          <ManagerProjects projects={state.videoProjects} localUsage={localUsage} mediaFilter={usageMediaType} granularity={usageGranularity} metric={usageMetric} cardSize={cardSize} sortField={projectSortField} sortDirection={projectSortDirection} busy={busy} onRestoreProject={restoreProject} />
         )}
       </section>
     </main>
@@ -2164,8 +2205,30 @@ function SegmentedControl({ value, options, onChange }: { value: string; options
 
 async function fetchManagerJson<T>(url: string, headers?: HeadersInit): Promise<T> {
   const response = await fetch(url, headers ? { headers } : undefined);
-  if (!response.ok) throw new Error(`${url} ${response.status}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => undefined);
+    const message = payload && typeof payload === "object" && "error" in payload
+      ? String((payload as { error: unknown }).error)
+      : `${url} ${response.status}`;
+    throw new Error(message);
+  }
   return response.json() as Promise<T>;
+}
+
+function managerUsageQuery(from: string, to: string) {
+  const params = new URLSearchParams();
+  const fromISO = datetimeLocalToISO(from);
+  const toISO = datetimeLocalToISO(to);
+  if (fromISO) params.set("from", fromISO);
+  if (toISO) params.set("to", toISO);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function datetimeLocalToISO(value: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "";
 }
 
 function UsagePanel({ localUsage, storageStats }: { localUsage: LocalUsageSummary | null; storageStats: StorageStats | null }) {
@@ -2249,6 +2312,8 @@ function ManagerProjects({
   granularity,
   metric,
   cardSize,
+  sortField,
+  sortDirection,
   busy,
   onRestoreProject
 }: {
@@ -2258,6 +2323,8 @@ function ManagerProjects({
   granularity: UsageGranularity;
   metric: UsageMetricMode;
   cardSize: ProjectCardSize;
+  sortField: ProjectSortField;
+  sortDirection: SortDirection;
   busy: string;
   onRestoreProject: (projectId: string) => void;
 }) {
@@ -2265,10 +2332,19 @@ function ManagerProjects({
     return <section className="manager-record-empty"><Folder size={30} /><h2>暂无项目</h2><p>executor 创建的项目会出现在这里。</p></section>;
   }
   const usageByProject = new Map((localUsage?.projectUsage ?? []).map((item) => [item.projectId, item]));
+  const rows = projects
+    .map((project) => ({ project, usage: usageByProject.get(project.id) ?? emptyProjectUsage(project) }))
+    .sort((a, b) => compareProjectRows(a, b, sortField, sortDirection, mediaFilter));
+  const totals = resolveProjectMonitorTotals(localUsage, mediaFilter);
   return (
-    <section className={`manager-projects ${cardSize}`}>
-      {projects.map((project) => {
-        const usage = usageByProject.get(project.id) ?? emptyProjectUsage(project);
+    <>
+      <section className="project-monitor-summary">
+        <UsageMetric label="当前任务" value={totals.requests} />
+        <UsageMetric label="当前 Token" value={formatTokenNumber(totals.totalTokens)} />
+        <UsageMetric label="当前总费用" value={formatCurrency(totals.estimatedCost)} />
+      </section>
+      <section className={`manager-projects ${cardSize}`}>
+      {rows.map(({ project, usage }) => {
         return (
           <article className={`manager-project-card ${project.deletedAt ? "deleted" : ""}`} key={project.id}>
             <div className="manager-project-title">
@@ -2301,8 +2377,61 @@ function ManagerProjects({
           </article>
         );
       })}
-    </section>
+      </section>
+    </>
   );
+}
+
+function resolveProjectMonitorTotals(localUsage: LocalUsageSummary | null, mediaFilter: MediaFilter) {
+  if (!localUsage) return { requests: 0, totalTokens: 0, estimatedCost: 0 };
+  if (mediaFilter === "all") {
+    const estimate = resolveUsageCostEstimate(localUsage);
+    return {
+      requests: localUsage.totals.requests,
+      totalTokens: localUsage.totals.totalTokens,
+      estimatedCost: estimate.estimatedCost
+    };
+  }
+  const media = localUsage.byMediaType?.[mediaFilter];
+  return {
+    requests: media?.requests ?? 0,
+    totalTokens: media?.totalTokens ?? 0,
+    estimatedCost: media?.estimatedCost ?? 0
+  };
+}
+
+function compareProjectRows(
+  a: { project: VideoProject; usage: ProjectUsageSummary },
+  b: { project: VideoProject; usage: ProjectUsageSummary },
+  field: ProjectSortField,
+  direction: SortDirection,
+  mediaFilter: MediaFilter
+) {
+  const factor = direction === "asc" ? 1 : -1;
+  let result = 0;
+  if (field === "name") {
+    result = a.project.name.localeCompare(b.project.name, "zh-CN");
+  } else if (field === "createdAt" || field === "updatedAt") {
+    result = timestampValue(a.project[field]) - timestampValue(b.project[field]);
+  } else {
+    result = projectSortMetric(a.usage, field, mediaFilter) - projectSortMetric(b.usage, field, mediaFilter);
+  }
+  return result * factor || a.project.name.localeCompare(b.project.name, "zh-CN");
+}
+
+function projectSortMetric(usage: ProjectUsageSummary, field: ProjectSortField, mediaFilter: MediaFilter) {
+  const scoped = mediaFilter === "all" ? undefined : usage.mediaTypes?.[mediaFilter];
+  if (field === "cost") return scoped?.estimatedCost ?? usage.estimatedCost;
+  if (field === "tokens") return scoped?.totalTokens ?? usage.totalTokens;
+  if (field === "requests") return scoped?.requests ?? usage.requests;
+  if (field === "succeeded") return scoped?.succeeded ?? usage.succeeded;
+  if (field === "failed") return scoped?.failed ?? usage.failed;
+  return 0;
+}
+
+function timestampValue(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
 }
 
 function emptyProjectUsage(project: VideoProject): ProjectUsageSummary {

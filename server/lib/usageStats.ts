@@ -78,7 +78,12 @@ export interface ProjectUsageSummary {
   bucketsByMediaType: Record<MediaType, Record<UsageGranularity, UsageBucket[]>>;
 }
 
-export function summarizeLocalUsage(data: DatabaseShape): LocalUsageSummary {
+export interface UsageTimeRange {
+  from?: Date;
+  to?: Date;
+}
+
+export function summarizeLocalUsage(data: DatabaseShape, range: UsageTimeRange = {}): LocalUsageSummary {
   const byStatus: LocalUsageSummary["byStatus"] = { queued: 0, running: 0, succeeded: 0, failed: 0 };
   const byMediaType: Record<MediaType, MutableMediaUsageSummary> = {
     video: createMediaUsage(),
@@ -105,7 +110,9 @@ export function summarizeLocalUsage(data: DatabaseShape): LocalUsageSummary {
   let outputTokens = 0;
   let totalTokens = 0;
 
-  for (const task of data.videoTasks) {
+  const filteredTasks = data.videoTasks.filter((task) => taskInUsageRange(task, range));
+
+  for (const task of filteredTasks) {
     const mediaType = mediaTypeOf(task);
     const taskRate = mediaType === "image" ? imageRate : rate;
     byStatus[task.status] += 1;
@@ -158,8 +165,8 @@ export function summarizeLocalUsage(data: DatabaseShape): LocalUsageSummary {
     source: "local",
     credentialsRequired: false,
     totals: {
-      requests: data.videoTasks.length,
-      visible: data.videoTasks.length - hidden,
+      requests: filteredTasks.length,
+      visible: filteredTasks.length - hidden,
       hidden,
       downloaded,
       referenceImages,
@@ -357,6 +364,15 @@ function addTaskToMediaUsage(summary: MutableMediaUsageSummary, task: VideoTask,
 
 function sortedBuckets(buckets: Map<string, UsageBucket>) {
   return [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function taskInUsageRange(task: VideoTask, range: UsageTimeRange) {
+  if (!range.from && !range.to) return true;
+  const date = validDate(task.updatedAt) ?? validDate(task.createdAt);
+  if (!date) return false;
+  if (range.from && date.getTime() < range.from.getTime()) return false;
+  if (range.to && date.getTime() > range.to.getTime()) return false;
+  return true;
 }
 
 function validDate(value: string) {

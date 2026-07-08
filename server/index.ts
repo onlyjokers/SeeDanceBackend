@@ -98,7 +98,9 @@ app.patch("/api/runtime-settings", asyncHandler(async (req, res) => {
 
 app.get("/api/manager/usage/local", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
-  res.json(summarizeLocalUsage(db.data));
+  const range = parseUsageTimeRange(req, res);
+  if (!range) return;
+  res.json(summarizeLocalUsage(db.data, range));
 }));
 
 app.get("/api/manager/storage", asyncHandler(async (req, res) => {
@@ -282,7 +284,9 @@ app.patch("/api/v1/manager/settings", asyncHandler(async (req, res) => {
 
 app.get("/api/v1/manager/usage", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
-  res.json(summarizeLocalUsage(db.data));
+  const range = parseUsageTimeRange(req, res);
+  if (!range) return;
+  res.json(summarizeLocalUsage(db.data, range));
 }));
 
 app.get("/api/v1/manager/storage", asyncHandler(async (req, res) => {
@@ -587,6 +591,28 @@ function sleep(ms: number) {
 function routeParam(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
+}
+
+function parseUsageTimeRange(req: express.Request, res: express.Response) {
+  const from = parseOptionalUsageDate(req.query.from);
+  const to = parseOptionalUsageDate(req.query.to);
+  if (from === null || to === null) {
+    res.status(400).json({ error: "时间筛选参数无效，请使用 ISO 日期时间。" });
+    return undefined;
+  }
+  if (from && to && from.getTime() > to.getTime()) {
+    res.status(400).json({ error: "时间筛选参数无效，开始时间不能晚于结束时间。" });
+    return undefined;
+  }
+  return { from, to };
+}
+
+function parseOptionalUsageDate(value: unknown) {
+  if (value === undefined || value === "") return undefined;
+  if (Array.isArray(value)) return null;
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
 }
 
 const runtimeSettingsSchema = z.object({

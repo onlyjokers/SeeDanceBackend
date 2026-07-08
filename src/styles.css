@@ -1146,6 +1146,54 @@ button:disabled {
   gap: 8px;
 }
 
+.monitor-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: min(100%, 980px);
+}
+
+.monitor-field {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px;
+  border: 1px solid #252b36;
+  border-radius: 10px;
+  background: #151820;
+  color: #9aa3b2;
+  font-size: 12px;
+}
+
+.monitor-field input,
+.monitor-field select {
+  width: 152px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #eef3fb;
+  font-size: 12px;
+}
+
+.monitor-field select {
+  width: 84px;
+}
+
+.monitor-clear {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #252b36;
+  border-radius: 10px;
+  background: #151820;
+  color: #c2cada;
+  font-size: 12px;
+}
+
+.monitor-clear:hover {
+  border-color: #384150;
+  color: #f5f8ff;
+}
+
 .segmented-control {
   min-height: 36px;
   padding: 3px;
@@ -1437,6 +1485,13 @@ button:disabled {
 .manager-projects {
   display: grid;
   gap: 14px;
+}
+
+.project-monitor-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .manager-projects.compact {
@@ -1893,7 +1948,19 @@ button:disabled {
     flex-direction: column;
   }
 
+  .monitor-controls {
+    justify-content: flex-start;
+  }
+
+  .monitor-field input {
+    width: 138px;
+  }
+
   .manager-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .project-monitor-summary {
     grid-template-columns: 1fr;
   }
 
