@@ -416,9 +416,9 @@ const topazAIModelOptions = [
   { value: "iris-2", label: "Iris", short: "Iris" },
   { value: "artemis", label: "Artemis", short: "Artemis" },
   { value: "nyx", label: "Nyx", short: "Nyx" },
-  { value: "theia", label: "Theia", short: "Theia" },
   { value: "gfx", label: "GFX", short: "GFX" },
-  { value: "rhea", label: "Rhea", short: "Rhea" }
+  { value: "rhea", label: "Rhea", short: "Rhea" },
+  { value: "rhea-xl", label: "Rhea XL", short: "Rhea XL" }
 ];
 const topazProcessOptions: Array<{ value: TopazProcessMode; label: string }> = [
   { value: "upscale", label: "放大" },
@@ -434,7 +434,7 @@ const topazTargetOptions: Array<{ value: TopazTargetPreset; label: string }> = [
   { value: "4x", label: "4x" },
   { value: "8x", label: "8x" }
 ];
-const topazCodecOptions = ["h264_videotoolbox", "hevc_videotoolbox", "prores_videotoolbox", "libx264", "libx265"];
+const topazCodecOptions = ["h264_mf"];
 
 const ratioOptions: VideoRatio[] = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 const imageRatioOptions: ImageRatio[] = ["2:1", "16:9", "3:2", "1:1", "2:3", "9:16"];
@@ -547,7 +547,7 @@ function App() {
   const [topazProcessModes, setTopazProcessModes] = useState<TopazProcessMode[]>(initialTopazProcessModes);
   const [topazAIModel, setTopazAIModel] = useState(normalizeTopazAIModel(persistedComposer?.topazAIModel));
   const [topazTargetPreset, setTopazTargetPreset] = useState<TopazTargetPreset>(normalizeTopazTargetPreset(persistedComposer?.topazTargetPreset));
-  const [topazCodec, setTopazCodec] = useState(persistedComposer?.topazCodec || "h264_videotoolbox");
+  const [topazCodec, setTopazCodec] = useState(persistedComposer?.topazCodec || "h264_mf");
   const [topazBitrate, setTopazBitrate] = useState(persistedComposer?.topazBitrate || "");
   const [topazQv, setTopazQv] = useState(normalizeTopazQv(persistedComposer?.topazQv));
   const [prompt, setPrompt] = useState(persistedComposer?.prompt ?? "");
@@ -830,7 +830,7 @@ function App() {
       setTopazProcessMode(nextModes[0] ?? "enhance");
       setTopazAIModel(task.topaz?.aiModel ?? "proteus");
       setTopazTargetPreset(task.topaz?.targetPreset ?? "2x");
-      setTopazCodec(task.topaz?.codec ?? "h264_videotoolbox");
+      setTopazCodec(task.topaz?.codec ?? "h264_mf");
       setTopazBitrate(task.topaz?.bitrate ?? "");
       setTopazQv(task.topaz?.qv ?? 82);
       setSlots([]);
@@ -865,7 +865,7 @@ function App() {
         processModes: task.topaz?.processModes ?? [task.topaz?.processMode ?? "enhance"],
         aiModel: task.topaz?.aiModel ?? "proteus",
         targetPreset: task.topaz?.targetPreset ?? "2x",
-        codec: task.topaz?.codec ?? "h264_videotoolbox",
+        codec: task.topaz?.codec ?? "h264_mf",
         bitrate: task.topaz?.bitrate,
         qv: task.topaz?.qv ?? 82,
         qualityParams: task.topaz?.qualityParams ?? {}
@@ -1154,7 +1154,7 @@ function App() {
             {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazModel"} onClick={(event) => toggleMenu("topazModel", event)} icon={<Film size={18} />} label={topazAIModelLabel(topazAIModel)} />}
             {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazTarget"} onClick={(event) => toggleMenu("topazTarget", event)} icon={<Gauge size={18} />} label={topazTargetLabel(topazTargetPreset)} />}
             {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazCodec"} onClick={(event) => toggleMenu("topazCodec", event)} icon={<FilePenLine size={18} />} label={topazCodecLabel(topazCodec)} />}
-            {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazQuality"} onClick={(event) => toggleMenu("topazQuality", event)} icon={<Sparkles size={18} />} label={`q:v ${topazQv ?? 82}`} />}
+            {composerKind === "video_upscale" && <MenuButton active={openMenu?.kind === "topazQuality"} onClick={(event) => toggleMenu("topazQuality", event)} icon={<Sparkles size={18} />} label={topazBitrate.trim() || "自动码率"} />}
             {composerKind !== "video_upscale" && <MenuButton active={openMenu?.kind === "model"} onClick={(event) => toggleMenu("model", event)} icon={mediaType === "image" ? <FileImage size={18} /> : <Film size={18} />} label={mediaType === "image" ? selectedImageModel.label : selectedModel.label} />}
             {composerKind === "video_generation" && <MenuButton active={openMenu?.kind === "mode"} onClick={(event) => toggleMenu("mode", event)} icon={<FileImage size={18} />} label={modeLabels[mode]} />}
             {composerKind !== "video_upscale" && <MenuButton active={openMenu?.kind === "ratio"} onClick={(event) => toggleMenu("ratio", event)} icon={<RatioIcon ratio={ratio} />} label={ratio} />}
@@ -1710,13 +1710,13 @@ function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersi
     return <div className="floating-menu model-menu" style={style}><p>选择 Topaz AI 模型</p>{topazAIModelOptions.map((item) => <button key={item.value} className={topazAIModel === item.value ? "selected" : ""} onClick={() => { onTopazAIModel(item.value); onClose(); }}><Film size={18} /><span>{item.label}</span><em>{item.value}</em>{topazAIModel === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "topazTarget") {
-    return <div className="floating-menu resolution-menu" style={style}><p>选择目标规格</p>{topazTargetOptions.map((item) => <button key={item.value} className={topazTargetPreset === item.value ? "selected" : ""} onClick={() => { onTopazTargetPreset(item.value); onClose(); }}><Gauge size={18} /><span>{item.label}</span><em>{item.value.endsWith("x") ? "倍数" : "按 scale 近似"}</em>{topazTargetPreset === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
+    return <div className="floating-menu resolution-menu" style={style}><p>选择目标规格</p>{topazTargetOptions.map((item) => <button key={item.value} className={topazTargetPreset === item.value ? "selected" : ""} onClick={() => { onTopazTargetPreset(item.value); onClose(); }}><Gauge size={18} /><span>{item.label}</span><em>{item.value.endsWith("x") ? "倍数" : "精确尺寸"}</em>{topazTargetPreset === item.value && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "topazCodec") {
     return <div className="floating-menu model-menu" style={style}><p>选择编码</p>{topazCodecOptions.map((item) => <button key={item} className={topazCodec === item ? "selected" : ""} onClick={() => { onTopazCodec(item); onClose(); }}><FilePenLine size={18} /><span>{topazCodecLabel(item)}</span><em>{item}</em>{topazCodec === item && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "topazQuality") {
-    return <div className="floating-menu topaz-quality-menu" style={style}><p>输出质量</p><label><span>q:v {topazQv}</span><input type="range" min="1" max="180" value={topazQv} onChange={(event) => onTopazQv(Number(event.currentTarget.value))} /></label><label><span>固定码率</span><input value={topazBitrate} onChange={(event) => onTopazBitrate(event.currentTarget.value)} placeholder="可选，如 10M" /></label></div>;
+    return <div className="floating-menu topaz-quality-menu" style={style}><p>输出质量</p><label><span>固定码率</span><input value={topazBitrate} onChange={(event) => onTopazBitrate(event.currentTarget.value)} placeholder="自动，或输入 20M / 35M / 50M" /></label><label><span>兼容 q:v {topazQv}</span><input type="range" min="1" max="180" value={topazQv} onChange={(event) => onTopazQv(Number(event.currentTarget.value))} /></label></div>;
   }
   if (kind === "model") {
     if (mediaType === "image") {
@@ -2043,14 +2043,8 @@ function ManagerApp() {
             {busy === "open-database" ? <Loader2 className="spin" size={18} /> : <Folder size={18} />}打开媒体数据库
           </button>}
           {managerView === "projects" && <div className="monitor-controls">
-            <label className="monitor-field">
-              <span>开始</span>
-              <input type="datetime-local" value={usageFrom} onChange={(event) => setUsageFrom(event.currentTarget.value)} />
-            </label>
-            <label className="monitor-field">
-              <span>结束</span>
-              <input type="datetime-local" value={usageTo} onChange={(event) => setUsageTo(event.currentTarget.value)} />
-            </label>
+            <DateTimePicker label="开始" value={usageFrom} onChange={setUsageFrom} />
+            <DateTimePicker label="结束" value={usageTo} onChange={setUsageTo} />
             <button className="monitor-clear" type="button" onClick={() => { setUsageFrom(""); setUsageTo(""); }}>清空筛选</button>
             <label className="monitor-field">
               <span>排序</span>
@@ -2203,6 +2197,60 @@ function SegmentedControl({ value, options, onChange }: { value: string; options
   );
 }
 
+function DateTimePicker({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const parts = dateTimePickerParts(value);
+
+  function update(next: Partial<ReturnType<typeof dateTimePickerParts>>) {
+    const merged = { ...parts, ...next };
+    if (!merged.date) {
+      onChange("");
+      return;
+    }
+    onChange(`${merged.date}T${merged.hour}:${merged.minute}`);
+  }
+
+  return (
+    <div className="datetime-picker">
+      <button className={`datetime-trigger ${value ? "selected" : ""}`} type="button" onClick={() => setOpen((current) => !current)}>
+        <span>{label}</span>
+        <strong>{formatDateTimePickerValue(value)}</strong>
+        <Clock3 size={14} />
+      </button>
+      {open && (
+        <div className="datetime-popover">
+          <label>
+            <span>日期</span>
+            <input type="date" value={parts.date} onChange={(event) => update({ date: event.currentTarget.value || todayDateValue() })} />
+          </label>
+          <div className="datetime-select-row">
+            <label>
+              <span>小时</span>
+              <select value={parts.hour} onChange={(event) => update({ hour: event.currentTarget.value })}>
+                {hourOptions.map((hour) => <option key={hour} value={hour}>{hour}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>分钟</span>
+              <select value={parts.minute} onChange={(event) => update({ minute: event.currentTarget.value })}>
+                {minuteOptions.map((minute) => <option key={minute} value={minute}>{minute}</option>)}
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>精确输入</span>
+            <input type="datetime-local" value={value} onChange={(event) => onChange(event.currentTarget.value)} />
+          </label>
+          <div className="datetime-actions">
+            <button type="button" onClick={() => onChange("")}>清除</button>
+            <button type="button" onClick={() => setOpen(false)}>完成</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 async function fetchManagerJson<T>(url: string, headers?: HeadersInit): Promise<T> {
   const response = await fetch(url, headers ? { headers } : undefined);
   if (!response.ok) {
@@ -2229,6 +2277,46 @@ function datetimeLocalToISO(value: string) {
   if (!value) return "";
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : "";
+}
+
+const hourOptions = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, "0"));
+const minuteOptions = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, "0"));
+
+function dateTimePickerParts(value: string) {
+  if (value) {
+    const [date, time = "00:00"] = value.split("T");
+    const [hour = "00", rawMinute = "00"] = time.split(":");
+    const minute = minuteOptions.includes(rawMinute) ? rawMinute : nearestMinuteOption(rawMinute);
+    return { date, hour: hourOptions.includes(hour) ? hour : "00", minute };
+  }
+  return { date: todayDateValue(), hour: "00", minute: "00" };
+}
+
+function nearestMinuteOption(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "00";
+  const rounded = Math.min(55, Math.max(0, Math.round(parsed / 5) * 5));
+  return String(rounded).padStart(2, "0");
+}
+
+function todayDateValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateTimePickerValue(value: string) {
+  if (!value) return "选择时间";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function UsagePanel({ localUsage, storageStats }: { localUsage: LocalUsageSummary | null; storageStats: StorageStats | null }) {
@@ -2709,6 +2797,7 @@ function topazAIModelLabel(value: string) {
 }
 
 function topazCodecLabel(value: string) {
+  if (value === "h264_mf") return "H264 MF";
   return value.replace("_videotoolbox", "").replace("lib", "").toUpperCase();
 }
 

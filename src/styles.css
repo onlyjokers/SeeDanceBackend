@@ -1179,6 +1179,110 @@ button:disabled {
   width: 84px;
 }
 
+.datetime-picker {
+  position: relative;
+}
+
+.datetime-trigger {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border: 1px solid #252b36;
+  border-radius: 10px;
+  background: #151820;
+  color: #9aa3b2;
+  font-size: 12px;
+}
+
+.datetime-trigger strong {
+  min-width: 76px;
+  color: #eef3fb;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.datetime-trigger:not(.selected) strong {
+  color: #707b8c;
+}
+
+.datetime-trigger:hover,
+.datetime-trigger.selected {
+  border-color: #384150;
+}
+
+.datetime-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 260px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #313948;
+  border-radius: 12px;
+  background: #10131a;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+.datetime-popover label {
+  display: grid;
+  gap: 6px;
+  color: #9aa3b2;
+  font-size: 12px;
+}
+
+.datetime-popover input,
+.datetime-popover select {
+  height: 34px;
+  min-width: 0;
+  border: 1px solid #252b36;
+  border-radius: 9px;
+  outline: 0;
+  background: #151820;
+  color: #eef3fb;
+  font-size: 12px;
+}
+
+.datetime-popover input {
+  padding: 0 9px;
+}
+
+.datetime-popover select {
+  padding: 0 8px;
+}
+
+.datetime-select-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.datetime-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.datetime-actions button {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #252b36;
+  border-radius: 8px;
+  background: #151820;
+  color: #c7d0dd;
+  font-size: 12px;
+}
+
+.datetime-actions button:last-child {
+  border-color: #3c5f92;
+  background: #21334e;
+  color: #f5f8ff;
+}
+
 .monitor-clear {
   height: 36px;
   padding: 0 12px;
