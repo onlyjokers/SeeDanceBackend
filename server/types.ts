@@ -74,9 +74,11 @@ export interface TopazTaskMetadata {
   processMode: "upscale" | "enhance" | "stabilize" | "interpolate";
   processModes?: Array<"upscale" | "enhance" | "stabilize" | "interpolate">;
   aiModel: string;
-  targetPreset: "2k" | "4k" | "8k" | "2x" | "4x" | "8x";
-  scale?: number;
-  codec: string;
+	  targetPreset: "2k" | "4k" | "8k" | "2x" | "4x" | "8x";
+	  scale?: number;
+	  targetWidth?: number;
+	  targetHeight?: number;
+	  codec: string;
   bitrate?: string;
   qv?: number;
   crf?: number;

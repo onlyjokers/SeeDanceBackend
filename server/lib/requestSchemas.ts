@@ -162,7 +162,7 @@ export const topazTaskRequestSchema = z.object({
   processModes: z.array(z.enum(topazProcessModes)).min(1).optional(),
   aiModel: z.string().trim().min(1).default("proteus"),
   targetPreset: z.enum(topazTargetPresets).default("2x"),
-  codec: z.string().trim().min(1).default("h264_videotoolbox"),
+  codec: z.string().trim().min(1).default("h264_mf"),
   bitrate: z.string().trim().optional(),
   qv: z.number().int().min(1).max(1024).optional(),
   crf: z.number().int().min(0).max(51).optional(),

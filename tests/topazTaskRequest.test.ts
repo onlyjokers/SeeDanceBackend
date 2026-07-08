@@ -14,7 +14,7 @@ describe("topaz task request schema", () => {
       processMode: "enhance",
       aiModel: "proteus",
       targetPreset: "4k",
-      codec: "h264_videotoolbox"
+      codec: "h264_mf"
     });
   });
 

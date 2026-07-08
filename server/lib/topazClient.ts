@@ -28,7 +28,16 @@ export interface TopazProcessResult {
   durationMs: number;
   sourceInfo: TopazSourceInfo;
   scale: number;
+  targetWidth?: number;
+  targetHeight?: number;
   raw: unknown;
+}
+
+export interface TopazTargetSpec {
+  scale: number;
+  width?: number;
+  height?: number;
+  estimate?: number;
 }
 
 export class TopazClient {
@@ -44,7 +53,7 @@ export class TopazClient {
     await mkdir(downloadDir, { recursive: true });
 
     const sourceInfo = await this.probe(cliPath, sourcePath);
-    const scale = scaleForTopazTarget(sourceInfo, input.topaz.targetPreset);
+    const targetSpec = targetSpecForTopazTarget(sourceInfo, input.topaz.targetPreset);
     const extension = extname(sourcePath) || ".mp4";
     const outputPath = resolve(downloadDir, `${input.taskId}-topaz${extension}`);
     const processModes = topazProcessModesFor(input.topaz);
@@ -59,21 +68,10 @@ export class TopazClient {
         currentInputPath,
         stepOutputPath,
         "--model",
-        mode,
-        "--ai-model",
-        resolveTopazAIModel(input.topaz.aiModel || input.settings.topazDefaultAIModel || this.config.topazDefaultAIModel || "prob-4"),
-        "--scale",
-        String(scale),
-        "--codec",
-        input.topaz.codec || "h264_videotoolbox"
+        mode
       ];
-      if (input.topaz.bitrate) args.push("--bitrate", input.topaz.bitrate);
-      if (input.topaz.qv !== undefined) args.push("--qv", String(input.topaz.qv));
-      if (input.topaz.crf !== undefined) args.push("--crf", String(input.topaz.crf));
-      for (const [key, value] of Object.entries(input.topaz.qualityParams ?? {})) {
-        if (value === undefined || value === "") continue;
-        args.push(`--${key}`, String(value));
-      }
+      appendModeSpecificArgs(args, mode, input.topaz, targetSpec, input.settings.topazDefaultAIModel || this.config.topazDefaultAIModel || "prob-4");
+      appendOutputArgs(args, input.topaz, targetSpec);
       args.push("--json");
       rawSteps.push(await runTopazJSON(cliPath, args, workDir));
       currentInputPath = stepOutputPath;
@@ -85,7 +83,9 @@ export class TopazClient {
       outputSize,
       durationMs: Date.now() - started,
       sourceInfo,
-      scale,
+      scale: targetSpec.scale,
+      targetWidth: targetSpec.width,
+      targetHeight: targetSpec.height,
       raw: rawSteps.length === 1 ? rawSteps[0] : { steps: rawSteps }
     };
   }
@@ -108,15 +108,21 @@ function topazProcessModesFor(topaz: TopazTaskMetadata): TopazProcessMode[] {
   return modes.filter((mode, index) => modes.indexOf(mode) === index) as TopazProcessMode[];
 }
 
-export function scaleForTopazTarget(source: { width?: number; height?: number }, preset: TopazTargetPreset) {
-  if (preset.endsWith("x")) return Number(preset.slice(0, -1));
-  const targetLongEdge = preset === "2k" ? 2048 : preset === "4k" ? 3840 : 7680;
-  const sourceLongEdge = Math.max(source.width ?? 0, source.height ?? 0);
-  if (!sourceLongEdge) return 2;
-  if (sourceLongEdge >= targetLongEdge) return 1;
-  if (sourceLongEdge * 2 >= targetLongEdge) return 2;
-  if (sourceLongEdge * 4 >= targetLongEdge) return 4;
-  return 8;
+export function targetSpecForTopazTarget(source: { width?: number; height?: number }, preset: TopazTargetPreset): TopazTargetSpec {
+  if (preset.endsWith("x")) return { scale: Number(preset.slice(0, -1)) };
+  const landscapeTargets: Record<Extract<TopazTargetPreset, "2k" | "4k" | "8k">, { width: number; height: number }> = {
+    "2k": { width: 2048, height: 1152 },
+    "4k": { width: 3840, height: 2160 },
+    "8k": { width: 7680, height: 4320 }
+  };
+  const target = landscapeTargets[preset as "2k" | "4k" | "8k"];
+  const vertical = (source.height ?? 0) > (source.width ?? 0);
+  return {
+    scale: 0,
+    width: vertical ? target.height : target.width,
+    height: vertical ? target.width : target.height,
+    estimate: 8
+  };
 }
 
 export function assertControlledTopazSourcePath(path: string, roots: { uploadDir: string; downloadDir: string }) {
@@ -158,8 +164,113 @@ function usesWindowsPath(value: string) {
 
 export function resolveTopazAIModel(value: string) {
   const normalized = value.trim().toLowerCase();
-  if (normalized === "proteus") return "prob-4";
+  const aliases: Record<string, string> = {
+    proteus: "prob-4",
+    rhea: "rhea-1",
+    "rhea-xl": "rxl-1",
+    nyx: "nyx-3",
+    iris: "iris-2",
+    artemis: "ahq-12",
+    gfx: "gcg-5"
+  };
+  if (aliases[normalized]) return aliases[normalized];
   return value;
+}
+
+export function resolveTopazCodec(value: string, platform: NodeJS.Platform = process.platform) {
+  const normalized = value.trim().toLowerCase();
+  if (platform === "win32" && [
+    "h264_videotoolbox",
+    "hevc_videotoolbox",
+    "prores_videotoolbox",
+    "libx264",
+    "libx265",
+    "prores_ks"
+  ].includes(normalized)) {
+    return "h264_mf";
+  }
+  return normalized || "h264_mf";
+}
+
+function appendModeSpecificArgs(args: string[], mode: TopazProcessMode, topaz: TopazTaskMetadata, target: TopazTargetSpec, defaultAIModel: string) {
+  if (mode === "upscale" || mode === "enhance") {
+    args.push("--ai-model", resolveTopazAIModel(topaz.aiModel || defaultAIModel));
+    args.push("--scale", String(target.scale));
+    if (target.width !== undefined && target.height !== undefined) {
+      args.push("--width", String(target.width), "--height", String(target.height));
+    }
+    if (target.estimate !== undefined) args.push("--estimate", String(target.estimate));
+    appendQualityParams(args, topaz.qualityParams, [
+      "preblur",
+      "noise",
+      "details",
+      "halo",
+      "blur",
+      "compression",
+      "prenoise",
+      "grain",
+      "gsize",
+      "kcolor",
+      "blend",
+      "device",
+      "vram",
+      "instances"
+    ]);
+    return;
+  }
+  if (mode === "stabilize") {
+    appendQualityParams(args, topaz.qualityParams, [
+      "smoothness",
+      "stabilize-full",
+      "ws",
+      "csx",
+      "csy",
+      "dof",
+      "roll",
+      "reduce",
+      "device",
+      "vram",
+      "instances"
+    ]);
+    return;
+  }
+  appendQualityParams(args, topaz.qualityParams, [
+    "fps",
+    "slowmo",
+    "rdt",
+    "device",
+    "vram",
+    "instances"
+  ]);
+}
+
+function appendOutputArgs(args: string[], topaz: TopazTaskMetadata, target: TopazTargetSpec) {
+  const codec = resolveTopazCodec(topaz.codec || "h264_mf");
+  args.push("--codec", codec);
+  const bitrate = topaz.bitrate || defaultTopazBitrate(codec, target);
+  if (bitrate) args.push("--bitrate", bitrate);
+  if (topaz.crf !== undefined && codec !== "h264_mf") args.push("--crf", String(topaz.crf));
+  if (topaz.qv !== undefined && codec === "h264_videotoolbox") args.push("--qv", String(topaz.qv));
+  if (codec === "h264_mf") args.push("--audio-bitrate", "192k");
+}
+
+function defaultTopazBitrate(codec: string, target: TopazTargetSpec) {
+  if (codec !== "h264_mf") return "";
+  if ((target.width ?? 0) >= 7680 || (target.height ?? 0) >= 7680) return "50M";
+  if ((target.width ?? 0) >= 3840 || (target.height ?? 0) >= 3840) return "35M";
+  return "20M";
+}
+
+function appendQualityParams(args: string[], params: TopazTaskMetadata["qualityParams"], allowedKeys: string[]) {
+  const allowed = new Set(allowedKeys);
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (!allowed.has(key) || value === undefined || value === "") continue;
+    if (typeof value === "boolean") {
+      args.push(value ? `--${key}` : `--no-${key}`);
+    } else {
+      args.push(`--${key}`, String(value));
+    }
+  }
 }
 
 async function runTopazJSON(command: string, args: string[], cwd?: string): Promise<unknown> {
@@ -168,7 +279,7 @@ async function runTopazJSON(command: string, args: string[], cwd?: string): Prom
   if (!trimmed) return { stderr };
   try {
     const parsed = JSON.parse(trimmed);
-    if (isRecord(parsed) && typeof parsed.error === "string") throw new Error(parsed.error);
+    if (isRecord(parsed) && typeof parsed.error === "string") throw new Error(compactTopazError(parsed.error));
     return parsed;
   } catch (error) {
     if (error instanceof SyntaxError) {
@@ -212,7 +323,7 @@ function runCommand(command: string, args: string[], cwd?: string, timeoutMs = 0
     child.once("close", (code) => {
       if (timeout) clearTimeout(timeout);
       if (code === 0) resolvePromise({ stdout, stderr });
-      else reject(new Error(`Topaz CLI 退出码 ${code}：${stderr || stdout}`));
+      else reject(new Error(`Topaz CLI 退出码 ${code}：${compactTopazError(stderr || stdout)}`));
     });
   });
 }
@@ -237,4 +348,15 @@ export function topazSourceFileName(path: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function compactTopazError(message: string) {
+  const normalized = message.replace(/\s+/g, " ").trim();
+  const invalidModel = normalized.match(/Invalid value ([^ ]+) for model/i);
+  if (invalidModel) return `Topaz model id is invalid: ${invalidModel[1]}`;
+  const missingInput = normalized.match(/Input file not found: ([^"}]+)/i);
+  if (missingInput) return `Topaz input file not found: ${missingInput[1].trim()}`;
+  if (/not found/i.test(normalized) && /topaz|ffmpeg|tool|command/i.test(normalized)) return "Topaz tool not found";
+  if (/encoder.*(unknown|not found|unavailable|invalid)/i.test(normalized)) return "Topaz encoder unavailable";
+  return normalized.slice(0, 500);
 }

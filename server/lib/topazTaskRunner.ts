@@ -86,9 +86,11 @@ export class TopazTaskRunner {
         topaz: {
           ...task.topaz,
           sourceLocalPath: sourcePath,
-          sourceInfo: result.sourceInfo,
-          scale: result.scale,
-          outputPath: result.outputPath,
+	          sourceInfo: result.sourceInfo,
+	          scale: result.scale,
+	          targetWidth: result.targetWidth,
+	          targetHeight: result.targetHeight,
+	          outputPath: result.outputPath,
           outputSize: result.outputSize,
           durationMs: result.durationMs
         },

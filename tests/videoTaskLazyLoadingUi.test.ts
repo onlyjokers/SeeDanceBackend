@@ -33,6 +33,10 @@ describe("video task lazy loading UI", () => {
     expect(imageResolutionOptionsBlock).not.toContain("label: \"4K\"");
     expect(source).toContain("const topazTargetOptions");
     expect(source).toContain('value: "4k", label: "4K档"');
+    expect(source).toContain("精确尺寸");
+    expect(source).toContain('const topazCodecOptions = ["h264_mf"]');
+    expect(source).not.toContain('value: "theia"');
+    expect(source).toContain('value: "rhea-xl"');
   });
 
   it("persists executor composer settings across page refreshes", () => {
