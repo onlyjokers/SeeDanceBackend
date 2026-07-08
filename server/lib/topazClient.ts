@@ -166,12 +166,19 @@ export function resolveTopazAIModel(value: string) {
   const normalized = value.trim().toLowerCase();
   const aliases: Record<string, string> = {
     proteus: "prob-4",
+    "prob-4": "prob-4",
     rhea: "rhea-1",
+    "rhea-1": "rhea-1",
     "rhea-xl": "rxl-1",
+    "rxl-1": "rxl-1",
     nyx: "nyx-3",
+    "nyx-3": "nyx-3",
     iris: "iris-2",
+    "iris-2": "iris-2",
     artemis: "ahq-12",
-    gfx: "gcg-5"
+    "ahq-12": "ahq-12",
+    gfx: "gcg-5",
+    "gcg-5": "gcg-5"
   };
   if (aliases[normalized]) return aliases[normalized];
   return value;
@@ -179,7 +186,7 @@ export function resolveTopazAIModel(value: string) {
 
 export function resolveTopazCodec(value: string, platform: NodeJS.Platform = process.platform) {
   const normalized = value.trim().toLowerCase();
-  if (platform === "win32" && [
+  if ([
     "h264_videotoolbox",
     "hevc_videotoolbox",
     "prores_videotoolbox",
@@ -189,6 +196,7 @@ export function resolveTopazCodec(value: string, platform: NodeJS.Platform = pro
   ].includes(normalized)) {
     return "h264_mf";
   }
+  if (platform === "win32" && normalized !== "h264_mf") return "h264_mf";
   return normalized || "h264_mf";
 }
 
@@ -250,13 +258,12 @@ function appendOutputArgs(args: string[], topaz: TopazTaskMetadata, target: Topa
   const bitrate = topaz.bitrate || defaultTopazBitrate(codec, target);
   if (bitrate) args.push("--bitrate", bitrate);
   if (topaz.crf !== undefined && codec !== "h264_mf") args.push("--crf", String(topaz.crf));
-  if (topaz.qv !== undefined && codec === "h264_videotoolbox") args.push("--qv", String(topaz.qv));
   if (codec === "h264_mf") args.push("--audio-bitrate", "192k");
 }
 
 function defaultTopazBitrate(codec: string, target: TopazTargetSpec) {
   if (codec !== "h264_mf") return "";
-  if ((target.width ?? 0) >= 7680 || (target.height ?? 0) >= 7680) return "50M";
+  if ((target.width ?? 0) >= 7680 || (target.height ?? 0) >= 7680) return "80M";
   if ((target.width ?? 0) >= 3840 || (target.height ?? 0) >= 3840) return "35M";
   return "20M";
 }

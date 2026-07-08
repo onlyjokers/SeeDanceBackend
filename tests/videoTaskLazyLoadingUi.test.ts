@@ -70,5 +70,7 @@ describe("video task lazy loading UI", () => {
     expect(source).not.toContain("topaz-note");
     expect(source).not.toContain("topaz-mode-toggle");
     expect(source).not.toContain("从已生成视频选择");
+    expect(source).toContain("固定码率");
+    expect(source).not.toContain("兼容 q:v");
   });
 });

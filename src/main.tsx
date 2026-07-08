@@ -515,7 +515,6 @@ interface PersistedComposerState {
   topazTargetPreset?: TopazTargetPreset;
   topazCodec?: string;
   topazBitrate?: string;
-  topazQv?: number;
   prompt?: string;
   slots?: ReferenceSlot[];
 }
@@ -549,7 +548,6 @@ function App() {
   const [topazTargetPreset, setTopazTargetPreset] = useState<TopazTargetPreset>(normalizeTopazTargetPreset(persistedComposer?.topazTargetPreset));
   const [topazCodec, setTopazCodec] = useState(persistedComposer?.topazCodec || "h264_mf");
   const [topazBitrate, setTopazBitrate] = useState(persistedComposer?.topazBitrate || "");
-  const [topazQv, setTopazQv] = useState(normalizeTopazQv(persistedComposer?.topazQv));
   const [prompt, setPrompt] = useState(persistedComposer?.prompt ?? "");
   const [slots, setSlots] = useState<ReferenceSlot[]>(() => restorePersistedSlots(persistedComposer, initialMode));
   const [busy, setBusy] = useState("");
@@ -649,11 +647,10 @@ function App() {
       topazTargetPreset,
       topazCodec,
       topazBitrate,
-      topazQv,
       prompt,
       slots
     });
-  }, [composerKind, duration, imageModel, imageQuality, imageResolution, mediaType, mode, modelVersion, prompt, ratio, referenceTransport, resolution, slots, topazAIModel, topazBitrate, topazCodec, topazProcessMode, topazProcessModes, topazQv, topazTargetPreset]);
+  }, [composerKind, duration, imageModel, imageQuality, imageResolution, mediaType, mode, modelVersion, prompt, ratio, referenceTransport, resolution, slots, topazAIModel, topazBitrate, topazCodec, topazProcessMode, topazProcessModes, topazTargetPreset]);
 
   useEffect(() => {
     if (view !== "generate") return;
@@ -784,7 +781,6 @@ function App() {
         targetPreset: topazTargetPreset,
         codec: topazCodec,
         bitrate: topazBitrate.trim() || undefined,
-        qv: topazQv,
         crf: undefined,
         qualityParams: {}
       } as ComposerPayload;
@@ -832,7 +828,6 @@ function App() {
       setTopazTargetPreset(task.topaz?.targetPreset ?? "2x");
       setTopazCodec(task.topaz?.codec ?? "h264_mf");
       setTopazBitrate(task.topaz?.bitrate ?? "");
-      setTopazQv(task.topaz?.qv ?? 82);
       setSlots([]);
       scrollTimelineToBottom("smooth");
       return;
@@ -867,7 +862,6 @@ function App() {
         targetPreset: task.topaz?.targetPreset ?? "2x",
         codec: task.topaz?.codec ?? "h264_mf",
         bitrate: task.topaz?.bitrate,
-        qv: task.topaz?.qv ?? 82,
         qualityParams: task.topaz?.qualityParams ?? {}
       });
       return;
@@ -1169,7 +1163,7 @@ function App() {
             </button>
           </div>
           {openMenu && (
-            <FloatingMenu kind={openMenu.kind} anchorX={openMenu.x} composerKind={composerKind} mediaType={mediaType} mode={mode} modelVersion={modelVersion} imageModel={imageModel} ratio={ratio} duration={duration} resolution={resolution} imageResolution={imageResolution} imageQuality={imageQuality} topazProcessModes={topazProcessModes} topazAIModel={topazAIModel} topazTargetPreset={topazTargetPreset} topazCodec={topazCodec} topazQv={topazQv ?? 82} topazBitrate={topazBitrate} availableResolutions={availableResolutions} onComposerKind={switchComposerKind} onMode={switchMode} onModel={chooseModel} onImageModel={setImageModel} onRatio={chooseRatio} onDuration={setDuration} onResolution={setResolution} onImageResolution={chooseImageResolution} onImageQuality={setImageQuality} onTopazProcessModeToggle={toggleTopazProcessMode} onTopazAIModel={setTopazAIModel} onTopazTargetPreset={setTopazTargetPreset} onTopazCodec={setTopazCodec} onTopazQv={setTopazQv} onTopazBitrate={setTopazBitrate} onClose={() => setOpenMenu(null)} />
+            <FloatingMenu kind={openMenu.kind} anchorX={openMenu.x} composerKind={composerKind} mediaType={mediaType} mode={mode} modelVersion={modelVersion} imageModel={imageModel} ratio={ratio} duration={duration} resolution={resolution} imageResolution={imageResolution} imageQuality={imageQuality} topazProcessModes={topazProcessModes} topazAIModel={topazAIModel} topazTargetPreset={topazTargetPreset} topazCodec={topazCodec} topazBitrate={topazBitrate} availableResolutions={availableResolutions} onComposerKind={switchComposerKind} onMode={switchMode} onModel={chooseModel} onImageModel={setImageModel} onRatio={chooseRatio} onDuration={setDuration} onResolution={setResolution} onImageResolution={chooseImageResolution} onImageQuality={setImageQuality} onTopazProcessModeToggle={toggleTopazProcessMode} onTopazAIModel={setTopazAIModel} onTopazTargetPreset={setTopazTargetPreset} onTopazCodec={setTopazCodec} onTopazBitrate={setTopazBitrate} onClose={() => setOpenMenu(null)} />
           )}
         </div>
       </section>}
@@ -1634,7 +1628,7 @@ function MenuButton({ icon, label, active, onClick }: { icon: React.ReactNode; l
   return <button className={`menu-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span><ChevronDown size={16} /></button>;
 }
 
-function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersion, imageModel, ratio, duration, resolution, imageResolution, imageQuality, topazProcessModes, topazAIModel, topazTargetPreset, topazCodec, topazQv, topazBitrate, availableResolutions, onComposerKind, onMode, onModel, onImageModel, onRatio, onDuration, onResolution, onImageResolution, onImageQuality, onTopazProcessModeToggle, onTopazAIModel, onTopazTargetPreset, onTopazCodec, onTopazQv, onTopazBitrate, onClose }: {
+function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersion, imageModel, ratio, duration, resolution, imageResolution, imageQuality, topazProcessModes, topazAIModel, topazTargetPreset, topazCodec, topazBitrate, availableResolutions, onComposerKind, onMode, onModel, onImageModel, onRatio, onDuration, onResolution, onImageResolution, onImageQuality, onTopazProcessModeToggle, onTopazAIModel, onTopazTargetPreset, onTopazCodec, onTopazBitrate, onClose }: {
   kind: MenuKind;
   anchorX: number;
   composerKind: ComposerKind;
@@ -1651,7 +1645,6 @@ function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersi
   topazAIModel: string;
   topazTargetPreset: TopazTargetPreset;
   topazCodec: string;
-  topazQv: number;
   topazBitrate: string;
   availableResolutions: VideoResolution[];
   onComposerKind: (value: ComposerKind) => void;
@@ -1667,7 +1660,6 @@ function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersi
   onTopazAIModel: (value: string) => void;
   onTopazTargetPreset: (value: TopazTargetPreset) => void;
   onTopazCodec: (value: string) => void;
-  onTopazQv: (value: number) => void;
   onTopazBitrate: (value: string) => void;
   onClose: () => void;
 }) {
@@ -1716,7 +1708,7 @@ function FloatingMenu({ kind, anchorX, composerKind, mediaType, mode, modelVersi
     return <div className="floating-menu model-menu" style={style}><p>选择编码</p>{topazCodecOptions.map((item) => <button key={item} className={topazCodec === item ? "selected" : ""} onClick={() => { onTopazCodec(item); onClose(); }}><FilePenLine size={18} /><span>{topazCodecLabel(item)}</span><em>{item}</em>{topazCodec === item && <Check className="option-check" size={18} />}</button>)}</div>;
   }
   if (kind === "topazQuality") {
-    return <div className="floating-menu topaz-quality-menu" style={style}><p>输出质量</p><label><span>固定码率</span><input value={topazBitrate} onChange={(event) => onTopazBitrate(event.currentTarget.value)} placeholder="自动，或输入 20M / 35M / 50M" /></label><label><span>兼容 q:v {topazQv}</span><input type="range" min="1" max="180" value={topazQv} onChange={(event) => onTopazQv(Number(event.currentTarget.value))} /></label></div>;
+    return <div className="floating-menu topaz-quality-menu" style={style}><p>输出质量</p><label><span>固定码率</span><input value={topazBitrate} onChange={(event) => onTopazBitrate(event.currentTarget.value)} placeholder="自动，或输入 20M / 35M / 80M" /></label></div>;
   }
   if (kind === "model") {
     if (mediaType === "image") {
@@ -2928,11 +2920,6 @@ function normalizeTopazAIModel(value: string | undefined) {
 
 function normalizeTopazTargetPreset(value: string | undefined): TopazTargetPreset {
   return topazTargetOptions.find((item) => item.value === value)?.value ?? "2x";
-}
-
-function normalizeTopazQv(value: number | undefined): number {
-  if (value === undefined) return 82;
-  return Number.isInteger(value) && value >= 1 && value <= 1024 ? value : 82;
 }
 
 function imageSizeFor(ratio: ImageRatio, resolution: ImageResolution) {

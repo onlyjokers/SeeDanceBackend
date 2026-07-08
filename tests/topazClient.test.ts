@@ -24,7 +24,7 @@ describe("Topaz client helpers", () => {
     expect(resolveTopazCodec("hevc_videotoolbox", "win32")).toBe("h264_mf");
     expect(resolveTopazCodec("prores_videotoolbox", "win32")).toBe("h264_mf");
     expect(resolveTopazCodec("libx264", "win32")).toBe("h264_mf");
-    expect(resolveTopazCodec("h264_videotoolbox", "darwin")).toBe("h264_videotoolbox");
+    expect(resolveTopazCodec("h264_videotoolbox", "darwin")).toBe("h264_mf");
   });
 
   it("compacts noisy Topaz CLI errors for UI display", () => {
@@ -227,6 +227,94 @@ process.exit(1);
     expect(processCall[processCall.indexOf("--width") + 1]).toBe("2160");
     expect(processCall[processCall.indexOf("--height") + 1]).toBe("3840");
     expect(processCall[processCall.indexOf("--estimate") + 1]).toBe("8");
+  });
+
+  it("normalizes legacy codec input to h264_mf bitrate output instead of qv", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "seendance-topaz-codec-"));
+    const cliPath = join(dir, "fake-topaz-video.mjs");
+    const callsPath = join(dir, "calls.jsonl");
+    const sourcePath = join(dir, "source.mp4");
+    await writeFile(sourcePath, "source");
+    await writeFile(cliPath, `#!/usr/bin/env node
+import { appendFileSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + "\\n");
+if (args[0] === "probe") {
+  console.log(JSON.stringify({ width: 720, height: 1280 }));
+  process.exit(0);
+}
+if (args[0] === "process") {
+  writeFileSync(args[2], "video");
+  console.log(JSON.stringify({ ok: true }));
+  process.exit(0);
+}
+process.exit(1);
+`);
+    await chmod(cliPath, 0o755);
+    const client = new TopazClient(testConfig(dir, cliPath));
+
+    await client.process({
+      taskId: "codec-task",
+      sourcePath,
+      settings: testSettings(dir, cliPath),
+      topaz: {
+        processMode: "upscale",
+        aiModel: "proteus",
+        targetPreset: "4k",
+        codec: "h264_videotoolbox",
+        qv: 82
+      }
+    });
+
+    const calls = (await readFile(callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const processCall = calls.find((args) => args[0] === "process")!;
+    expect(processCall[processCall.indexOf("--codec") + 1]).toBe("h264_mf");
+    expect(processCall).not.toContain("--qv");
+    expect(processCall[processCall.indexOf("--bitrate") + 1]).toBe("35M");
+    expect(processCall[processCall.indexOf("--audio-bitrate") + 1]).toBe("192k");
+  });
+
+  it("uses 80M as the automatic h264_mf bitrate for 8K outputs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "seendance-topaz-8k-"));
+    const cliPath = join(dir, "fake-topaz-video.mjs");
+    const callsPath = join(dir, "calls.jsonl");
+    const sourcePath = join(dir, "source.mp4");
+    await writeFile(sourcePath, "source");
+    await writeFile(cliPath, `#!/usr/bin/env node
+import { appendFileSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + "\\n");
+if (args[0] === "probe") {
+  console.log(JSON.stringify({ width: 1920, height: 1080 }));
+  process.exit(0);
+}
+if (args[0] === "process") {
+  writeFileSync(args[2], "video");
+  console.log(JSON.stringify({ ok: true }));
+  process.exit(0);
+}
+process.exit(1);
+`);
+    await chmod(cliPath, 0o755);
+    const client = new TopazClient(testConfig(dir, cliPath));
+
+    await client.process({
+      taskId: "bitrate-task",
+      sourcePath,
+      settings: testSettings(dir, cliPath),
+      topaz: {
+        processMode: "upscale",
+        aiModel: "proteus",
+        targetPreset: "8k",
+        codec: "h264_mf"
+      }
+    });
+
+    const calls = (await readFile(callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const processCall = calls.find((args) => args[0] === "process")!;
+    expect(processCall[processCall.indexOf("--width") + 1]).toBe("7680");
+    expect(processCall[processCall.indexOf("--height") + 1]).toBe("4320");
+    expect(processCall[processCall.indexOf("--bitrate") + 1]).toBe("80M");
   });
 
   it("passes absolute source and work paths to the Topaz CLI when config paths are relative", async () => {
