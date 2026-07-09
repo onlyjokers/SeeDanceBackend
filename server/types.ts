@@ -42,7 +42,11 @@ export interface VideoTask {
   duration?: number;
   resolution?: VideoResolution;
   references?: VideoReferenceInput[];
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  orchestratorJobId?: string;
+  orchestratorStatus?: string;
+  orchestratorProgress?: number;
+  orchestratorUpdatedAt?: string;
   errorMessage?: string;
   tokenUsage?: TokenUsage;
   videoUrl?: string;
@@ -136,6 +140,7 @@ export interface RuntimeSettings {
   topazWorkDir?: string;
   maxConcurrentTopazTasks?: string;
   topazDefaultAIModel?: string;
+  strangeOrchestratorURL?: string;
   tokenPricePerThousand: string;
   imageTokenPricePerThousand?: string;
   image2APIKey?: string;
@@ -163,6 +168,7 @@ export interface StorageStats {
     hidden: number;
     succeeded: number;
     failed: number;
+    cancelled?: number;
     running: number;
     queued: number;
     generatedVideos: number;

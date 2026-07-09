@@ -9,6 +9,7 @@ describe("API contract", () => {
     expect(apiV1Paths.project("project 1")).toBe("/api/v1/projects/project%201");
     expect(apiV1Paths.managerProjectRestore("project 1")).toBe("/api/v1/manager/projects/project%201/restore");
     expect(apiV1Paths.generationTasks).toBe("/api/v1/generation-tasks");
+    expect(apiV1Paths.generationTaskCancel("task 1")).toBe("/api/v1/generation-tasks/task%201/cancel");
     expect(apiV1Paths.uploadImages).toBe("/api/v1/uploads/images");
     expect(apiV1Paths.uploadLocal("ref 1.png")).toBe("/api/v1/uploads/local/ref%201.png");
     expect(apiV1Paths.downloadsOpenFolder).toBe("/api/v1/downloads/open-folder");
@@ -17,6 +18,9 @@ describe("API contract", () => {
     expect(apiV1Paths.managerUsage).toBe("/api/v1/manager/usage");
     expect(apiV1Paths.managerStorage).toBe("/api/v1/manager/storage");
     expect(apiV1Paths.managerGenerationTasks).toBe("/api/v1/manager/generation-tasks");
+    expect(apiV1Paths.managerLocalComputeResources).toBe("/api/v1/manager/local-compute/resources");
+    expect(apiV1Paths.managerLocalComputePresets).toBe("/api/v1/manager/local-compute/presets");
+    expect(apiV1Paths.managerLocalComputeFree).toBe("/api/v1/manager/local-compute/free");
   });
 
   it("creates a frontend-safe API client with base URL normalization", () => {

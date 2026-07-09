@@ -15,6 +15,7 @@ describe("api v1 routes", () => {
     expect(source).toContain('app.post("/api/v1/generation-tasks"');
     expect(source).toContain('app.get("/api/v1/generation-tasks"');
     expect(source).toContain('app.get("/api/v1/generation-tasks/:id"');
+    expect(source).toContain('app.post("/api/v1/generation-tasks/:id/cancel"');
     expect(source).toContain('app.post("/api/v1/uploads/images"');
     expect(source).toContain('app.get("/api/v1/uploads/local/:name"');
     expect(source).toContain('app.post("/api/v1/downloads/open-folder"');
@@ -22,6 +23,9 @@ describe("api v1 routes", () => {
     expect(source).toContain('app.get("/api/v1/manager/settings"');
     expect(source).toContain('app.patch("/api/v1/manager/settings"');
     expect(source).toContain('app.get("/api/v1/manager/generation-tasks"');
+    expect(source).toContain('app.get("/api/v1/manager/local-compute/resources"');
+    expect(source).toContain('app.get("/api/v1/manager/local-compute/presets"');
+    expect(source).toContain('app.post("/api/v1/manager/local-compute/free"');
     expect(source).toContain('app.delete("/api/v1/manager/generation-tasks/:id"');
   });
 });

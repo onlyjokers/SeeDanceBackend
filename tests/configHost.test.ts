@@ -8,6 +8,7 @@ describe("server host binding", () => {
   const originalMaxPollRetryCount = process.env.MAX_POLL_RETRY_COUNT;
   const originalMaxConcurrentVideoTasks = process.env.MAX_CONCURRENT_VIDEO_TASKS;
   const originalTokenPricePerThousand = process.env.TOKEN_PRICE_PER_THOUSAND;
+  const originalStrangeOrchestratorURL = process.env.STRANGE_ORCHESTRATOR_URL;
   const originalCorsOrigin = process.env.CORS_ORIGIN;
 
   afterEach(() => {
@@ -23,6 +24,8 @@ describe("server host binding", () => {
     else process.env.MAX_CONCURRENT_VIDEO_TASKS = originalMaxConcurrentVideoTasks;
     if (originalTokenPricePerThousand === undefined) delete process.env.TOKEN_PRICE_PER_THOUSAND;
     else process.env.TOKEN_PRICE_PER_THOUSAND = originalTokenPricePerThousand;
+    if (originalStrangeOrchestratorURL === undefined) delete process.env.STRANGE_ORCHESTRATOR_URL;
+    else process.env.STRANGE_ORCHESTRATOR_URL = originalStrangeOrchestratorURL;
     if (originalCorsOrigin === undefined) delete process.env.CORS_ORIGIN;
     else process.env.CORS_ORIGIN = originalCorsOrigin;
   });
@@ -119,6 +122,22 @@ describe("server host binding", () => {
     const config = loadConfig();
 
     expect(config.tokenPricePerThousand).toBe(0.05);
+  });
+
+  it("defaults local compute manager URL to StrangeOrchestrator", () => {
+    delete process.env.STRANGE_ORCHESTRATOR_URL;
+
+    const config = loadConfig();
+
+    expect(config.strangeOrchestratorURL).toBe("http://127.0.0.1:8790");
+  });
+
+  it("allows local compute manager URL to be configured explicitly", () => {
+    process.env.STRANGE_ORCHESTRATOR_URL = "http://127.0.0.1:8791";
+
+    const config = loadConfig();
+
+    expect(config.strangeOrchestratorURL).toBe("http://127.0.0.1:8791");
   });
 
   it("does not enable cross-origin frontend access unless configured", () => {

@@ -41,6 +41,7 @@ export const defaultRuntimeSettings: RuntimeSettings = {
   topazWorkDir: "data/topaz",
   maxConcurrentTopazTasks: "1",
   topazDefaultAIModel: "prob-4",
+  strangeOrchestratorURL: "http://127.0.0.1:8790",
   tokenPricePerThousand: "0.049085",
   imageTokenPricePerThousand: "0.049085",
   image2APIKey: "",
@@ -477,7 +478,8 @@ export async function getStorageStats(
     queued: db.data.videoTasks.filter((task) => task.status === "queued").length,
     running: db.data.videoTasks.filter((task) => task.status === "running").length,
     succeeded: db.data.videoTasks.filter((task) => task.status === "succeeded").length,
-    failed: db.data.videoTasks.filter((task) => task.status === "failed").length
+    failed: db.data.videoTasks.filter((task) => task.status === "failed").length,
+    cancelled: db.data.videoTasks.filter((task) => task.status === "cancelled").length
   };
   return {
     database: {

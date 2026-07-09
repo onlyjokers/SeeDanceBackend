@@ -26,6 +26,7 @@ export interface AppConfig {
   topazWorkDir?: string;
   maxConcurrentTopazTasks?: number;
   topazDefaultAIModel?: string;
+  strangeOrchestratorURL: string;
   tokenPricePerThousand: number;
   imageTokenPricePerThousand?: number;
   image2APIKey?: string;
@@ -61,6 +62,7 @@ export function loadConfig(): AppConfig {
     topazWorkDir: process.env.TOPAZ_WORK_DIR || "data/topaz",
     maxConcurrentTopazTasks: integerEnv("MAX_CONCURRENT_TOPAZ_TASKS", 1) || 1,
     topazDefaultAIModel: process.env.TOPAZ_DEFAULT_AI_MODEL || "prob-4",
+    strangeOrchestratorURL: process.env.STRANGE_ORCHESTRATOR_URL || "http://127.0.0.1:8790",
     tokenPricePerThousand: numberEnv("TOKEN_PRICE_PER_THOUSAND", 0.049085),
     imageTokenPricePerThousand: numberEnv("IMAGE_TOKEN_PRICE_PER_THOUSAND", numberEnv("TOKEN_PRICE_PER_THOUSAND", 0.049085)),
     image2APIKey: process.env.IMAGE2_API_KEY || "",
@@ -91,6 +93,7 @@ export function publicConfig(config: AppConfig) {
     topazWorkDir: config.topazWorkDir ?? "data/topaz",
     maxConcurrentTopazTasks: config.maxConcurrentTopazTasks ?? 1,
     topazDefaultAIModel: config.topazDefaultAIModel ?? "prob-4",
+    strangeOrchestratorURL: config.strangeOrchestratorURL,
     tokenPricePerThousand: config.tokenPricePerThousand,
     imageTokenPricePerThousand: config.imageTokenPricePerThousand ?? config.tokenPricePerThousand,
     image2APIKeyConfigured: Boolean(config.image2APIKey),

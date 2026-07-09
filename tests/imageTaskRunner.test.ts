@@ -30,6 +30,7 @@ const config: AppConfig = {
   maxPollRetryCount: 2,
   maxConcurrentVideoTasks: 3,
   maxConcurrentImageTasks: 2,
+  strangeOrchestratorURL: "http://127.0.0.1:8790",
   tokenPricePerThousand: 0.049085,
   imageTokenPricePerThousand: 0.049085,
   image2APIKey: "image-key",

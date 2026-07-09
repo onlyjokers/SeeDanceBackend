@@ -29,6 +29,7 @@ const config: AppConfig = {
   pollTimeoutMs: 1000,
   maxPollRetryCount: 5,
   maxConcurrentVideoTasks: 3,
+  strangeOrchestratorURL: "http://127.0.0.1:8790",
   tokenPricePerThousand: 0.049085,
   corsOrigin: ""
 };

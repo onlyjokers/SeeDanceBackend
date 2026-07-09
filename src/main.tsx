@@ -95,6 +95,7 @@ interface PublicConfig {
   topazWorkDir: string;
   maxConcurrentTopazTasks: string;
   topazDefaultAIModel: string;
+  strangeOrchestratorURL: string;
   topazCLIAvailable: boolean;
   topazCLIStatus: string;
   uploadDir: string;
@@ -127,6 +128,7 @@ interface RuntimeSettings {
   topazWorkDir: string;
   maxConcurrentTopazTasks: string;
   topazDefaultAIModel: string;
+  strangeOrchestratorURL: string;
   tokenPricePerThousand: string;
   imageTokenPricePerThousand: string;
   image2APIKey: string;
@@ -183,7 +185,11 @@ interface VideoTask {
   imageResolution?: ImageResolution;
   imageQuality?: ImageQuality;
   references?: VideoReference[];
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  orchestratorJobId?: string;
+  orchestratorStatus?: string;
+  orchestratorProgress?: number;
+  orchestratorUpdatedAt?: string;
   errorMessage?: string;
   tokenUsage?: TokenUsage;
   videoUrl?: string;
@@ -333,6 +339,7 @@ interface StorageStats {
     hidden: number;
     succeeded: number;
     failed: number;
+    cancelled?: number;
     running: number;
     queued: number;
     generatedVideos: number;
@@ -1235,7 +1242,7 @@ function TopFilters({ open, timeFilter, mediaFilter, modeFilter, statusFilter, o
       )}
       {open === "status" && (
         <div className="top-filter-menu status-filter-menu">
-          {(["all", "queued", "running", "succeeded", "failed"] as StatusFilter[]).map((item) => <button key={item} className={statusFilter === item ? "selected" : ""} onClick={() => { onStatus(item); onOpen(null); }}>{statusFilterLabel(item)}</button>)}
+          {(["all", "queued", "running", "succeeded", "failed", "cancelled"] as StatusFilter[]).map((item) => <button key={item} className={statusFilter === item ? "selected" : ""} onClick={() => { onStatus(item); onOpen(null); }}>{statusFilterLabel(item)}</button>)}
         </div>
       )}
     </div>
@@ -1430,6 +1437,7 @@ function statusFilterLabel(value: StatusFilter) {
   if (value === "running") return "运行中";
   if (value === "succeeded") return "成功";
   if (value === "failed") return "失败";
+  if (value === "cancelled") return "已取消";
   return "操作类型";
 }
 
@@ -1812,15 +1820,18 @@ function imagePreviewUrl(task: VideoTask) {
 
 function taskStatusLabel(task: VideoTask, latestLog?: PollLog) {
   if (taskKindOf(task) === "video_upscale") {
+    if (task.status === "cancelled") return "本机计算已取消";
     if (task.status === "succeeded" && task.downloadPath) return "Topaz 视频已输出";
     if (task.status === "succeeded") return "Topaz 处理完成";
     return latestLog?.message || task.status;
   }
   if (mediaTypeOf(task) === "image") {
+    if (task.status === "cancelled") return "图片任务已取消";
     if (task.status === "succeeded" && (task.imageDownloadPaths?.length ?? 0) > 0) return "图片已下载";
     if (task.status === "succeeded") return "图片生成完成";
     return latestLog?.message.replace("图片任务状态：", "") || task.status;
   }
+  if (task.status === "cancelled") return "任务已取消";
   if (task.status === "succeeded" && task.downloadPath) return "视频已下载";
   if (task.status === "succeeded") return "生成完成";
   return latestLog?.message.replace("视频任务状态：", "") || task.status;
@@ -1842,7 +1853,7 @@ function ReferenceThumbs({ references }: { references: VideoReference[] }) {
 }
 
 function TaskPlaceholder({ status }: { status: VideoTask["status"] }) {
-  return <div className="task-placeholder"><Loader2 className={status === "running" || status === "queued" ? "spin" : ""} size={30} /><span>{status === "failed" ? "生成失败" : "等待生成结果"}</span></div>;
+  return <div className="task-placeholder"><Loader2 className={status === "running" || status === "queued" ? "spin" : ""} size={30} /><span>{status === "failed" ? "生成失败" : status === "cancelled" ? "任务已取消" : "等待生成结果"}</span></div>;
 }
 
 function ManagerApp() {
@@ -2133,6 +2144,7 @@ function ManagerApp() {
                   <SettingField label="TOPAZ_WORK_DIR" value={settings.topazWorkDir} onChange={(value) => setSettings({ ...settings, topazWorkDir: value })} />
                   <SettingField label="MAX_CONCURRENT_TOPAZ_TASKS" value={settings.maxConcurrentTopazTasks} onChange={(value) => setSettings({ ...settings, maxConcurrentTopazTasks: value })} />
                   <SettingField label="TOPAZ_DEFAULT_AI_MODEL" value={settings.topazDefaultAIModel} onChange={(value) => setSettings({ ...settings, topazDefaultAIModel: value })} />
+                  <SettingField label="STRANGE_ORCHESTRATOR_URL" value={settings.strangeOrchestratorURL} onChange={(value) => setSettings({ ...settings, strangeOrchestratorURL: value })} />
                   {publicConfigState && <div className={`settings-status ${publicConfigState.topazCLIAvailable ? "ok" : "error"}`}>{publicConfigState.topazCLIStatus}</div>}
                   <SettingField label="TOKEN_PRICE_PER_THOUSAND" value={settings.tokenPricePerThousand} onChange={(value) => setSettings({ ...settings, tokenPricePerThousand: value })} />
                   <SettingField label="IMAGE_TOKEN_PRICE_PER_THOUSAND" value={settings.imageTokenPricePerThousand} onChange={(value) => setSettings({ ...settings, imageTokenPricePerThousand: value })} />
@@ -2697,6 +2709,7 @@ function ManagerRecords({ managerToken, projects, busy, onHardDelete, onDownload
           <option value="running">运行中</option>
           <option value="queued">排队中</option>
           <option value="failed">失败</option>
+          <option value="cancelled">已取消</option>
           <option value="hidden">已隐藏</option>
         </select>
         <select value={sort} onChange={(event) => setSort(event.currentTarget.value as typeof sort)}>

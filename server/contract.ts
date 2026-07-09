@@ -12,6 +12,7 @@ export const apiV1Paths = {
   managerProjectRestore: (id: string) => `${apiV1Prefix}/manager/projects/${encodeURIComponent(id)}/restore`,
   generationTasks: `${apiV1Prefix}/generation-tasks`,
   generationTask: (id: string) => `${apiV1Prefix}/generation-tasks/${encodeURIComponent(id)}`,
+  generationTaskCancel: (id: string) => `${apiV1Prefix}/generation-tasks/${encodeURIComponent(id)}/cancel`,
   generationTaskDebug: (id: string) => `${apiV1Prefix}/generation-tasks/${encodeURIComponent(id)}/debug`,
   generationTaskFile: (id: string, index: number) => `${apiV1Prefix}/generation-tasks/${encodeURIComponent(id)}/file/${index}`,
   uploadImages: `${apiV1Prefix}/uploads/images`,
@@ -22,7 +23,10 @@ export const apiV1Paths = {
   managerUsage: `${apiV1Prefix}/manager/usage`,
   managerStorage: `${apiV1Prefix}/manager/storage`,
   managerGenerationTasks: `${apiV1Prefix}/manager/generation-tasks`,
-  managerGenerationTask: (id: string) => `${apiV1Prefix}/manager/generation-tasks/${encodeURIComponent(id)}`
+  managerGenerationTask: (id: string) => `${apiV1Prefix}/manager/generation-tasks/${encodeURIComponent(id)}`,
+  managerLocalComputeResources: `${apiV1Prefix}/manager/local-compute/resources`,
+  managerLocalComputePresets: `${apiV1Prefix}/manager/local-compute/presets`,
+  managerLocalComputeFree: `${apiV1Prefix}/manager/local-compute/free`
 } as const;
 
 export interface APIErrorResponse {
@@ -99,6 +103,7 @@ export function createAPIClient(options: APIClientOptions = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }),
+    cancelGenerationTask: (id: string) => request<GenerationTaskResponse>(apiV1Paths.generationTaskCancel(id), { method: "POST" }),
     loginManager: (body: ManagerLoginRequest) => request<ManagerLoginResponse>(apiV1Paths.managerLogin, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

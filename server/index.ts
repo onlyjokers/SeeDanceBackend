@@ -9,8 +9,9 @@ import { VideoClient } from "./lib/videoClient.js";
 import { ImageClient } from "./lib/imageClient.js";
 import { SerialTaskRunner } from "./lib/taskRunner.js";
 import { ImageTaskRunner } from "./lib/imageTaskRunner.js";
-import { TopazClient, assertControlledTopazSourcePath, checkTopazCLIAvailable } from "./lib/topazClient.js";
+import { assertControlledTopazSourcePath } from "./lib/topazSourcePath.js";
 import { TopazTaskRunner } from "./lib/topazTaskRunner.js";
+import { LocalComputeUnavailableError, OrchestratorRequestError, StrangeOrchestratorClient } from "./lib/strangeOrchestratorClient.js";
 import { validatePublicAssetUrl, type AssetType, type VideoReferenceInput } from "./lib/payloads.js";
 import { parseImageTaskRequest, parseTopazTaskRequest, parseVideoTaskRequest } from "./lib/requestSchemas.js";
 import { getDownloadPathForTask, openDownloadFolder } from "./lib/downloadFolder.js";
@@ -21,22 +22,23 @@ import { fileFromLocalUpload, resolveLocalUploadPath, saveUploadedImageLocally, 
 import { buildTaskDebugExport } from "./lib/taskDebugExport.js";
 import { errorMessage, retryOperation } from "./lib/retry.js";
 import type { TaskRunContext } from "./lib/taskRunner.js";
-import type { RuntimeSettings } from "./types.js";
+import type { RuntimeSettings, VideoTask } from "./types.js";
 
 const config = loadConfig();
 const db = await openDB(config.databasePath, config.sqlitePath);
 await ensureDefaultVideoProject(db);
 await mkdir(config.downloadDir, { recursive: true });
 await mkdir(config.uploadDir, { recursive: true });
-await mkdir(config.topazWorkDir ?? "data/topaz", { recursive: true });
 
 const assetsClient = new AssetsClient(config, () => getRuntimeSettings(db, config));
 const videoClient = new VideoClient(config, () => getRuntimeSettings(db, config));
 const imageClient = new ImageClient(config, () => getRuntimeSettings(db, config));
-const topazClient = new TopazClient(config);
+const orchestratorClient = new StrangeOrchestratorClient({
+  baseURL: async () => (await getRuntimeSettings(db, config)).strangeOrchestratorURL || config.strangeOrchestratorURL
+});
 const runner = new SerialTaskRunner(db, videoClient, config, () => getRuntimeSettings(db, config));
 const imageRunner = new ImageTaskRunner(db, imageClient, config, () => getRuntimeSettings(db, config));
-const topazRunner = new TopazTaskRunner(db, topazClient, config, () => getRuntimeSettings(db, config));
+const topazRunner = new TopazTaskRunner(db, orchestratorClient, config, () => getRuntimeSettings(db, config));
 const app = express();
 const managerToken = "sts-manager-session";
 
@@ -53,7 +55,6 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/config", asyncHandler(async (_req, res) => {
   const settings = await getRuntimeSettings(db, config);
-  const topazCLI = await checkTopazCLIAvailable(settings.topazCLIPath ?? "topaz-video");
   res.json({
     ...publicConfig(config),
     arkAPIKeyConfigured: Boolean(settings.arkAPIKey),
@@ -68,15 +69,17 @@ app.get("/api/config", asyncHandler(async (_req, res) => {
     topazWorkDir: settings.topazWorkDir,
     maxConcurrentTopazTasks: settings.maxConcurrentTopazTasks,
     topazDefaultAIModel: settings.topazDefaultAIModel,
-    topazCLIAvailable: topazCLI.available,
-    topazCLIStatus: topazCLI.status,
+    strangeOrchestratorURL: settings.strangeOrchestratorURL,
+    topazCLIAvailable: Boolean(settings.strangeOrchestratorURL),
+    topazCLIStatus: `本机计算管理器：${settings.strangeOrchestratorURL}`,
     assetsCredentialsConfigured: Boolean(settings.volcengineAK && settings.volcengineSK)
   });
 }));
 
-app.get("/api/state", (_req, res) => {
+app.get("/api/state", asyncHandler(async (_req, res) => {
+  await syncOrchestratorBackedTasks(db.data.videoTasks);
   res.json(db.data);
-});
+}));
 
 app.get("/api/shell-state", (_req, res) => {
   res.json({
@@ -126,7 +129,6 @@ app.post("/api/manager/login", asyncHandler(async (req, res) => {
 
 app.get("/api/v1/config", asyncHandler(async (_req, res) => {
   const settings = await getRuntimeSettings(db, config);
-  const topazCLI = await checkTopazCLIAvailable(settings.topazCLIPath ?? "topaz-video");
   res.json({
     ...publicConfig(config),
     arkAPIKeyConfigured: Boolean(settings.arkAPIKey),
@@ -141,8 +143,9 @@ app.get("/api/v1/config", asyncHandler(async (_req, res) => {
     topazWorkDir: settings.topazWorkDir,
     maxConcurrentTopazTasks: settings.maxConcurrentTopazTasks,
     topazDefaultAIModel: settings.topazDefaultAIModel,
-    topazCLIAvailable: topazCLI.available,
-    topazCLIStatus: topazCLI.status,
+    strangeOrchestratorURL: settings.strangeOrchestratorURL,
+    topazCLIAvailable: Boolean(settings.strangeOrchestratorURL),
+    topazCLIStatus: `本机计算管理器：${settings.strangeOrchestratorURL}`,
     assetsCredentialsConfigured: Boolean(settings.volcengineAK && settings.volcengineSK)
   });
 }));
@@ -189,14 +192,23 @@ app.post("/api/v1/generation-tasks", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/v1/generation-tasks", asyncHandler(async (req, res) => {
+  await syncOrchestratorBackedTasks(db.data.videoTasks);
   const input = taskPageQuerySchema.parse(req.query);
   res.json(getExecutorVideoTaskPage(db.data, input));
 }));
 
 app.get("/api/v1/generation-tasks/:id", asyncHandler(async (req, res) => {
   const id = routeParam(req.params.id);
+  await syncOrchestratorBackedTask(id);
   const task = db.data.videoTasks.find((item) => item.id === id);
   if (!task || task.hiddenAt) return res.status(404).json({ error: "生成任务不存在。" });
+  res.json(task);
+}));
+
+app.post("/api/v1/generation-tasks/:id/cancel", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const task = await topazRunner.cancelTask(id);
+  if (!task) return res.status(404).json({ error: "生成任务不存在。" });
   res.json(task);
 }));
 
@@ -301,8 +313,24 @@ app.get("/api/v1/manager/storage", asyncHandler(async (req, res) => {
 
 app.get("/api/v1/manager/generation-tasks", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  await syncOrchestratorBackedTasks(db.data.videoTasks);
   const input = managerTaskPageQuerySchema.parse(req.query);
   res.json(getManagerVideoTaskPage(db.data, input));
+}));
+
+app.get("/api/v1/manager/local-compute/resources", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await orchestratorClient.getResources());
+}));
+
+app.get("/api/v1/manager/local-compute/presets", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await orchestratorClient.getPresets());
+}));
+
+app.post("/api/v1/manager/local-compute/free", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await orchestratorClient.freeResources());
 }));
 
 app.delete("/api/v1/manager/generation-tasks/:id", asyncHandler(async (req, res) => {
@@ -467,20 +495,38 @@ app.post("/api/generation-tasks", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/executor/tasks", asyncHandler(async (req, res) => {
+  await syncOrchestratorBackedTasks(db.data.videoTasks);
   const input = taskPageQuerySchema.parse(req.query);
   res.json(getExecutorVideoTaskPage(db.data, input));
 }));
 
 app.get("/api/manager/video-tasks", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  await syncOrchestratorBackedTasks(db.data.videoTasks);
   const input = managerTaskPageQuerySchema.parse(req.query);
   res.json(getManagerVideoTaskPage(db.data, input));
 }));
 
 app.get("/api/manager/generation-tasks", asyncHandler(async (req, res) => {
   if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  await syncOrchestratorBackedTasks(db.data.videoTasks);
   const input = managerTaskPageQuerySchema.parse(req.query);
   res.json(getManagerVideoTaskPage(db.data, input));
+}));
+
+app.get("/api/manager/local-compute/resources", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await orchestratorClient.getResources());
+}));
+
+app.get("/api/manager/local-compute/presets", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await orchestratorClient.getPresets());
+}));
+
+app.post("/api/manager/local-compute/free", asyncHandler(async (req, res) => {
+  if (!isManagerRequest(req)) return res.status(401).json({ error: "需要管理权限。" });
+  res.json(await orchestratorClient.freeResources());
 }));
 
 app.post("/api/downloads/open-folder", asyncHandler(async (_req, res) => {
@@ -509,6 +555,13 @@ app.get("/api/generation-tasks/:id/file/:index", asyncHandler(async (req, res) =
   const path = Number.isInteger(index) ? task.imageDownloadPaths?.[index] : undefined;
   if (!path) return res.status(404).json({ error: "这个图片任务还没有对应的本地文件。" });
   return res.sendFile(resolve(path));
+}));
+
+app.post("/api/generation-tasks/:id/cancel", asyncHandler(async (req, res) => {
+  const id = routeParam(req.params.id);
+  const task = await topazRunner.cancelTask(id);
+  if (!task) return res.status(404).json({ error: "生成任务不存在。" });
+  res.json(task);
 }));
 
 app.get("/api/video-tasks/:id/debug", asyncHandler(async (req, res) => {
@@ -560,6 +613,16 @@ app.use("/api", (_req, res) => {
 mountStaticClient(app, resolve(process.cwd(), "dist"));
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err instanceof LocalComputeUnavailableError) {
+    return res.status(503).json({ error: err.message });
+  }
+  if (err instanceof OrchestratorRequestError) {
+    return res.status(err.status >= 400 && err.status < 600 ? err.status : 502).json({
+      error: err.message,
+      code: err.code,
+      raw: err.raw
+    });
+  }
   const message = err instanceof Error ? err.message : String(err);
   res.status(500).json({ error: message });
 });
@@ -591,6 +654,21 @@ function sleep(ms: number) {
 function routeParam(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
+}
+
+async function syncOrchestratorBackedTask(id: string) {
+  const task = db.data.videoTasks.find((item) => item.id === id);
+  if (!task?.orchestratorJobId || isTerminalTaskStatus(task.status)) return task;
+  return topazRunner.syncTask(id);
+}
+
+async function syncOrchestratorBackedTasks(tasks: VideoTask[]) {
+  const candidates = tasks.filter((task) => task.orchestratorJobId && !isTerminalTaskStatus(task.status));
+  await Promise.all(candidates.slice(0, 20).map((task) => syncOrchestratorBackedTask(task.id)));
+}
+
+function isTerminalTaskStatus(status: VideoTask["status"]) {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function parseUsageTimeRange(req: express.Request, res: express.Response) {
@@ -641,6 +719,7 @@ const runtimeSettingsSchema = z.object({
   topazWorkDir: z.string().trim().min(1),
   maxConcurrentTopazTasks: z.string().trim().min(1),
   topazDefaultAIModel: z.string().trim().min(1),
+  strangeOrchestratorURL: z.string().trim().url(),
   tokenPricePerThousand: z.string().trim().min(1),
   imageTokenPricePerThousand: z.string().trim().min(1),
   image2APIKey: z.string().trim(),
@@ -657,7 +736,7 @@ const taskPageQuerySchema = z.object({
   before: z.string().optional()
 });
 const managerTaskPageQuerySchema = taskPageQuerySchema.extend({
-  status: z.enum(["all", "queued", "running", "succeeded", "failed", "hidden"]).optional(),
+  status: z.enum(["all", "queued", "running", "succeeded", "failed", "cancelled", "hidden"]).optional(),
   query: z.string().optional(),
   sort: z.enum(["newest", "oldest", "status", "project"]).optional()
 });

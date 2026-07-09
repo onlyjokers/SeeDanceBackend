@@ -25,6 +25,7 @@ const config: AppConfig = {
   pollTimeoutMs: 3600000,
   maxPollRetryCount: 5,
   maxConcurrentVideoTasks: 100,
+  strangeOrchestratorURL: "http://127.0.0.1:8790",
   tokenPricePerThousand: 0.049085,
   corsOrigin: ""
 };
@@ -54,6 +55,7 @@ describe("expanded runtime settings", () => {
       pollTimeoutSeconds: "3600",
       maxPollRetryCount: "5",
       maxConcurrentVideoTasks: "100",
+      strangeOrchestratorURL: "http://127.0.0.1:8790",
       tokenPricePerThousand: "0.049085"
     });
   });
@@ -70,6 +72,7 @@ describe("expanded runtime settings", () => {
       pollTimeoutSeconds: "1200",
       maxPollRetryCount: "7",
       maxConcurrentVideoTasks: "12",
+      strangeOrchestratorURL: "http://127.0.0.1:8791",
       tokenPricePerThousand: "0.05"
     });
 
@@ -81,6 +84,7 @@ describe("expanded runtime settings", () => {
       pollTimeoutSeconds: "1200",
       maxPollRetryCount: "7",
       maxConcurrentVideoTasks: "12",
+      strangeOrchestratorURL: "http://127.0.0.1:8791",
       tokenPricePerThousand: "0.05"
     });
   });
@@ -156,6 +160,7 @@ function awaitableRuntimeSettingsFallback() {
     pollTimeoutSeconds: "3600",
     maxPollRetryCount: "5",
     maxConcurrentVideoTasks: "100",
+    strangeOrchestratorURL: "http://127.0.0.1:8790",
     tokenPricePerThousand: "0.049085"
   };
 }

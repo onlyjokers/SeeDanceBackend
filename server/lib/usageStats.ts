@@ -84,7 +84,7 @@ export interface UsageTimeRange {
 }
 
 export function summarizeLocalUsage(data: DatabaseShape, range: UsageTimeRange = {}): LocalUsageSummary {
-  const byStatus: LocalUsageSummary["byStatus"] = { queued: 0, running: 0, succeeded: 0, failed: 0 };
+  const byStatus: LocalUsageSummary["byStatus"] = { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 };
   const byMediaType: Record<MediaType, MutableMediaUsageSummary> = {
     video: createMediaUsage(),
     image: createMediaUsage()

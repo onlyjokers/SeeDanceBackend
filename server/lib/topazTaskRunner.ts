@@ -1,38 +1,34 @@
+import { resolve } from "node:path";
 import type { AppConfig } from "./config.js";
 import type { AppDB } from "./db.js";
 import { addPollLog, updateVideoTask } from "./db.js";
-import type { RuntimeSettings } from "../types.js";
+import type { RuntimeSettings, TopazTaskMetadata, VideoTask } from "../types.js";
 import { errorMessage } from "./retry.js";
-import type { TopazProcessResult } from "./topazClient.js";
-import { resolve } from "node:path";
+import {
+  mapOrchestratorStatusToVideoTaskStatus,
+  type CreateOrchestratorJobRequest,
+  type CreateOrchestratorJobResponse,
+  type OrchestratorJobRecord
+} from "./strangeOrchestratorClient.js";
 
 type Job = () => Promise<void>;
 type RuntimeSettingsProvider = () => RuntimeSettings | Promise<RuntimeSettings>;
 
-export interface TopazClientLike {
-  process(input: {
-    taskId: string;
-    sourcePath: string;
-    settings: RuntimeSettings;
-    topaz: NonNullable<RuntimeSettingsAwareTopazTask["topaz"]>;
-  }): Promise<TopazProcessResult>;
+export interface TopazOrchestratorClientLike {
+  createJob(payload: CreateOrchestratorJobRequest): Promise<CreateOrchestratorJobResponse>;
+  getJob(jobId: string): Promise<OrchestratorJobRecord>;
+  cancelJob(jobId: string): Promise<OrchestratorJobRecord>;
+  getResources(): Promise<unknown>;
+  getPresets(): Promise<unknown>;
+  freeResources(): Promise<unknown>;
 }
+
+export type TopazClientLike = TopazOrchestratorClientLike;
 
 interface RuntimeSettingsAwareTopazTask {
   id: string;
-  topaz?: {
-    sourceTaskId?: string;
-    sourceLocalPath?: string;
-    processMode: "upscale" | "enhance" | "stabilize" | "interpolate";
-    processModes?: Array<"upscale" | "enhance" | "stabilize" | "interpolate">;
-    aiModel: string;
-    targetPreset: "2k" | "4k" | "8k" | "2x" | "4x" | "8x";
-    codec: string;
-    bitrate?: string;
-    qv?: number;
-    crf?: number;
-    qualityParams?: Record<string, number | boolean | string>;
-  };
+  orchestratorJobId?: string;
+  topaz?: TopazTaskMetadata;
 }
 
 export class TopazTaskRunner {
@@ -41,7 +37,7 @@ export class TopazTaskRunner {
 
   constructor(
     private readonly db: AppDB,
-    private readonly topazClient: TopazClientLike,
+    private readonly orchestratorClient: TopazOrchestratorClientLike,
     private readonly config: AppConfig,
     private readonly runtimeSettings?: RuntimeSettingsProvider
   ) {}
@@ -51,6 +47,28 @@ export class TopazTaskRunner {
       await this.processTask(taskId);
     });
     void this.drain();
+  }
+
+  async syncTask(taskId: string) {
+    const task = this.db.data.videoTasks.find((item) => item.id === taskId);
+    if (!task?.orchestratorJobId) return task;
+    const job = await this.orchestratorClient.getJob(task.orchestratorJobId);
+    await this.applyOrchestratorJob(taskId, job);
+    return this.db.data.videoTasks.find((item) => item.id === taskId);
+  }
+
+  async cancelTask(taskId: string) {
+    const task = this.db.data.videoTasks.find((item) => item.id === taskId);
+    if (!task?.orchestratorJobId) {
+      await updateVideoTask(this.db, taskId, {
+        status: "cancelled",
+        errorMessage: "任务已取消"
+      });
+      return this.db.data.videoTasks.find((item) => item.id === taskId);
+    }
+    const job = await this.orchestratorClient.cancelJob(task.orchestratorJobId);
+    await this.applyOrchestratorJob(taskId, job);
+    return this.db.data.videoTasks.find((item) => item.id === taskId);
   }
 
   private async drain() {
@@ -71,45 +89,86 @@ export class TopazTaskRunner {
       const task = this.db.data.videoTasks.find((item) => item.id === taskId);
       if (!task?.topaz) throw new Error("Topaz 任务缺少处理参数。");
       await updateVideoTask(this.db, taskId, { status: "running" });
-      await addPollLog(this.db, taskId, "Topaz 视频放大开始", task.topaz);
+      await addPollLog(this.db, taskId, "本机计算任务提交开始", task.topaz);
       const settings = await this.fullSettings();
       const sourcePath = await this.resolveSourcePath(task);
-      const result = await this.topazClient.process({
-        taskId,
-        sourcePath,
-        settings,
-        topaz: task.topaz
-      });
+      const payload = this.createTopazJobPayload(taskId, sourcePath, settings, task.topaz);
+      const created = await this.orchestratorClient.createJob(payload);
       await updateVideoTask(this.db, taskId, {
-        status: "succeeded",
-        downloadPath: result.outputPath,
+        orchestratorJobId: created.jobId,
+        orchestratorStatus: created.status,
+        orchestratorUpdatedAt: new Date().toISOString(),
         topaz: {
           ...task.topaz,
-          sourceLocalPath: sourcePath,
-	          sourceInfo: result.sourceInfo,
-	          scale: result.scale,
-	          targetWidth: result.targetWidth,
-	          targetHeight: result.targetHeight,
-	          outputPath: result.outputPath,
-          outputSize: result.outputSize,
-          durationMs: result.durationMs
+          sourceLocalPath: sourcePath
         },
-        raw: result.raw
+        raw: created
       });
-      await addPollLog(this.db, taskId, `Topaz 视频放大已完成：${result.outputPath}`, {
-        ...(isRecord(result.raw) ? result.raw : {}),
-        outputPath: result.outputPath,
-        outputSize: result.outputSize,
-        durationMs: result.durationMs,
-        scale: result.scale
-      });
+      await addPollLog(this.db, taskId, `本机计算任务已提交：${created.jobId}`, created);
+      await this.pollOrchestratorJob(taskId, created.jobId);
     } catch (error) {
       await updateVideoTask(this.db, taskId, {
         status: "failed",
         errorMessage: errorMessage(error)
       });
-      await addPollLog(this.db, taskId, "Topaz 视频放大失败", { error: errorMessage(error) });
+      await addPollLog(this.db, taskId, "本机计算任务失败", { error: errorMessage(error) });
     }
+  }
+
+  private async pollOrchestratorJob(taskId: string, jobId: string) {
+    const started = Date.now();
+    let lastStatus = "";
+    while (Date.now() - started < this.config.pollTimeoutMs) {
+      const job = await this.orchestratorClient.getJob(jobId);
+      await this.applyOrchestratorJob(taskId, job);
+      if (job.status !== lastStatus) {
+        await addPollLog(this.db, taskId, `本机计算任务状态：${job.status}`, job);
+        lastStatus = job.status;
+      }
+      if (isTerminalOrchestratorStatus(job.status)) return;
+      await delay(this.config.pollIntervalMs);
+    }
+    throw new Error("本机计算任务轮询超时。");
+  }
+
+  private async applyOrchestratorJob(taskId: string, job: OrchestratorJobRecord) {
+    const existing = this.db.data.videoTasks.find((item) => item.id === taskId);
+    const outputPath = outputPathFromJob(job);
+    const patch: Partial<VideoTask> = {
+      status: mapOrchestratorStatusToVideoTaskStatus(job.status),
+      orchestratorJobId: job.id,
+      orchestratorStatus: job.status,
+      orchestratorProgress: job.progress,
+      orchestratorUpdatedAt: job.updatedAt,
+      raw: job
+    };
+    if (job.status === "succeeded" && outputPath) {
+      patch.downloadPath = outputPath;
+      patch.topaz = {
+        ...existing?.topaz,
+        outputPath
+      } as TopazTaskMetadata;
+    }
+    if (job.status === "failed" || job.status === "cancelled") {
+      patch.errorMessage = job.errorMessage || job.errorCode || (job.status === "cancelled" ? "任务已取消" : "本机计算任务失败");
+    }
+    await updateVideoTask(this.db, taskId, patch);
+  }
+
+  private createTopazJobPayload(taskId: string, sourcePath: string, settings: RuntimeSettings, topaz: TopazTaskMetadata): CreateOrchestratorJobRequest {
+    return {
+      source: "SeeDanceTest",
+      externalId: taskId,
+      preset: presetForTopaz(topaz),
+      priority: "normal",
+      input: {
+        videoPath: sourcePath,
+        topaz
+      },
+      output: {
+        directory: settings.downloadDir || this.config.downloadDir
+      }
+    };
   }
 
   private async resolveSourcePath(task: RuntimeSettingsAwareTopazTask) {
@@ -123,14 +182,14 @@ export class TopazTaskRunner {
   }
 
   private async currentSettings() {
-    const settings = this.runtimeSettings ? await this.runtimeSettings() : undefined;
+    const settings = await this.runtimeSettings?.();
     return {
       maxConcurrentTopazTasks: parsePositiveInteger(settings?.maxConcurrentTopazTasks, this.config.maxConcurrentTopazTasks ?? 1)
     };
   }
 
   private async fullSettings(): Promise<RuntimeSettings> {
-    const settings = this.runtimeSettings ? await this.runtimeSettings() : undefined;
+    const settings = await this.runtimeSettings?.();
     return {
       port: String(this.config.port),
       host: this.config.host,
@@ -157,6 +216,7 @@ export class TopazTaskRunner {
       topazWorkDir: this.config.topazWorkDir ?? "data/topaz",
       maxConcurrentTopazTasks: String(this.config.maxConcurrentTopazTasks ?? 1),
       topazDefaultAIModel: this.config.topazDefaultAIModel ?? "prob-4",
+      strangeOrchestratorURL: this.config.strangeOrchestratorURL,
       tokenPricePerThousand: String(this.config.tokenPricePerThousand),
       imageTokenPricePerThousand: String(this.config.imageTokenPricePerThousand ?? this.config.tokenPricePerThousand),
       image2APIKey: this.config.image2APIKey ?? "",
@@ -167,12 +227,28 @@ export class TopazTaskRunner {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function presetForTopaz(topaz: TopazTaskMetadata) {
+  const modes = topaz.processModes?.length ? topaz.processModes : [topaz.processMode];
+  if (modes.includes("interpolate")) return "topaz.interpolate.chronos_60fps";
+  if (topaz.targetPreset === "4k") return "topaz.upscale.proteus_4k";
+  return "topaz.upscale.proteus_2x";
+}
+
+function outputPathFromJob(job: OrchestratorJobRecord) {
+  const value = job.output.path ?? job.output.videoPath ?? job.output.outputPath;
+  return typeof value === "string" ? value : undefined;
+}
+
+function isTerminalOrchestratorStatus(status: OrchestratorJobRecord["status"]) {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number) {
   if (value === undefined || value.trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -77,7 +77,7 @@ describe("usage stats", () => {
       totalTokens: 120,
       estimatedCost: 0.01
     });
-    expect(summary.byStatus).toEqual({ queued: 0, running: 1, succeeded: 1, failed: 1 });
+    expect(summary.byStatus).toEqual({ queued: 0, running: 1, succeeded: 1, failed: 1, cancelled: 0 });
     expect(summary.byProject[0]).toMatchObject({ projectId: "p1", projectName: "广告", requests: 2 });
     expect(summary.byModel[0]).toMatchObject({ modelVersion: "doubao-seedance-2-0-fast-260128", requests: 2 });
     expect(summary.byDay).toEqual([
